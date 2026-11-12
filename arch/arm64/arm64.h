@@ -1,0 +1,354 @@
+/* arch/arm64/arm64.h — внутренние объявления ARM64-бэкенда.
+ * Этот заголовок НЕ подключается ничем за пределами arch/arm64/ —
+ * наружу торчит только hal.h / hal_gfx.h / hal_input.h / hal_time.h.
+ */
+#ifndef ARCH_ARM64_H
+#define ARCH_ARM64_H
+
+#include <stdint.h>
+#include <stddef.h>
+
+/* ---------------- Карта памяти QEMU "virt" ----------------
+ * Реальный телефон отдаёт эти адреса через device tree; на этапе
+ * отладки под QEMU они фиксированы и совпадают из версии в версию.
+ * Для порта на конкретный SoC меняются только эти константы. */
+#define VIRT_UART0_BASE    0x09000000UL   /* PL011 UART        */
+#define VIRT_RTC_BASE      0x09010000UL   /* PL031 RTC          */
+#define VIRT_FWCFG_BASE    0x09020000UL   /* QEMU fw_cfg (MMIO) */
+#define VIRT_VIRTIO_BASE   0x0a000000UL   /* virtio-mmio слот 0 */
+#define VIRT_VIRTIO_STRIDE 0x200UL
+#define VIRT_VIRTIO_SLOTS  32
+
+/* ---------------- MMIO ---------------- */
+static inline void     mmio_write32(uint64_t addr, uint32_t v) { *(volatile uint32_t *)addr = v; }
+static inline uint32_t mmio_read32 (uint64_t addr)             { return *(volatile uint32_t *)addr; }
+static inline void     mmio_write16(uint64_t addr, uint16_t v) { *(volatile uint16_t *)addr = v; }
+static inline uint16_t mmio_read16 (uint64_t addr)             { return *(volatile uint16_t *)addr; }
+static inline void     mmio_write8 (uint64_t addr, uint8_t v)  { *(volatile uint8_t  *)addr = v; }
+static inline uint8_t  mmio_read8  (uint64_t addr)             { return *(volatile uint8_t  *)addr; }
+static inline void     mmio_write64(uint64_t addr, uint64_t v) { *(volatile uint64_t *)addr = v; }
+static inline uint64_t mmio_read64 (uint64_t addr)             { return *(volatile uint64_t *)addr; }
+
+/* Барьеры. dsb — дождаться завершения ВСЕХ обращений к памяти, dmb —
+ * только упорядочить. Нужны везде, где мы говорим "железо, забирай":
+ * без них процессор имеет право переставить запись дескриптора после
+ * записи в регистр-звонок, и устройство прочитает мусор. */
+static inline void dsb_sy(void) { __asm__ volatile ("dsb sy" ::: "memory"); }
+static inline void dmb_sy(void) { __asm__ volatile ("dmb sy" ::: "memory"); }
+static inline void isb(void)    { __asm__ volatile ("isb"    ::: "memory"); }
+
+/* Big-endian помощники: fw_cfg — единственный интерфейс QEMU, который
+ * общается в сетевом порядке байт вне зависимости от порядка байт CPU. */
+static inline uint16_t bswap16(uint16_t v) { return (uint16_t)((v >> 8) | (v << 8)); }
+static inline uint32_t bswap32(uint32_t v) {
+    return ((v >> 24) & 0x000000FFu) | ((v >> 8) & 0x0000FF00u) |
+           ((v <<  8) & 0x00FF0000u) | ((v << 24) & 0xFF000000u);
+}
+static inline uint64_t bswap64(uint64_t v) {
+    return ((uint64_t)bswap32((uint32_t)v) << 32) | bswap32((uint32_t)(v >> 32));
+}
+
+/* ---------------- Последовательный порт ----------------
+ * Диспетчер в arch/arm64/uart.c: какой контроллер за этими функциями —
+ * PL011 или Qualcomm UARTDM — выясняется во время выполнения по device
+ * tree. Вызывающий код разницы не видит. */
+void uart_init(void);
+void uart_putc(char c);
+void uart_write(const char *s);
+int  uart_getc(void);            /* -1, если нечего читать */
+void uart_write_hex(uint64_t v); /* отладочный вывод — до появления GUI */
+void uart_report_platform(void); /* что удалось выяснить про железо */
+
+/* ---------------- MMU и кэши ---------------- */
+/* Без MMU все обращения к ОЗУ трактуются как Device-nGnRnE (некэшируемые),
+ * и отрисовка кадра в фреймбуфер получается в десятки раз медленнее.
+ * Поэтому включаем MMU с плоским (identity) отображением 0..4 ГиБ. */
+void mmu_init(const void *dtb);
+int  mmu_enabled(void);
+
+/* Обслуживание кэша для DMA. Устройство (ramfb-дисплей, virtio) читает
+ * ОЗУ мимо кэша процессора, поэтому после записи данных для устройства
+ * их надо вытолкнуть (clean), а перед чтением записанного устройством —
+ * выбросить свою устаревшую копию (invalidate). */
+void arch_dcache_clean(const void *addr, size_t len);
+
+/* --- Постоянный журнал (arch/arm64/ramoops.c) -------------------------
+ * Пишет в область ОЗУ, переживающую перезагрузку, чтобы лог можно было
+ * прочитать из Android после неудачного старта. На платах без такой
+ * области не собирается вовсе — см. CONFIG_LOG_RAMOOPS. */
+/* --- Полосы на экране (arch/arm64/early_fb.c) -------------------------
+ * Отладочный вывод там, где другого нет: по полосе на этап загрузки. */
+#ifdef CONFIG_EARLY_FB_MARKS
+void early_fb_band(int index, uint8_t r, uint8_t g, uint8_t b);
+void early_fb_alert(void);
+void early_con_init(void);
+/* Печатать ли журнал ещё и на экране. По умолчанию нет: там показывается
+ * ход загрузки. В провод и в сохраняемую область он идёт всегда. */
+void early_con_show(int on);
+void early_con_puts(const char *s);
+void early_con_color(const char *s, uint8_t r, uint8_t g, uint8_t b);
+void early_con_hex(uint64_t v);
+void early_con_hex8(uint8_t v);
+void early_con_hex32(uint32_t v);
+#else
+#define early_fb_band(i, r, g, b) do { (void)(i); (void)(r); (void)(g); (void)(b); } while (0)
+#define early_fb_alert()          do { } while (0)
+#define early_con_init()          do { } while (0)
+#define early_con_show(on)        do { (void)(on); } while (0)
+#define early_con_puts(s)         do { (void)(s); } while (0)
+#define early_con_color(s, r, g, b) do { (void)(s); (void)(r); (void)(g); (void)(b); } while (0)
+#define early_con_hex(v)          do { (void)(v); } while (0)
+#define early_con_hex32(v)        do { (void)(v); } while (0)
+#define early_con_hex8(v)         do { (void)(v); } while (0)
+#endif
+
+#ifdef CONFIG_LOG_RAMOOPS
+void ramoops_init(const void *dtb);
+void ramoops_putc(char c);
+void ramoops_write(const char *s);
+int  ramoops_region(uint64_t *base, uint32_t *size);
+#else
+#define ramoops_init(d)   do { (void)(d); } while (0)
+#define ramoops_putc(c)   do { (void)(c); } while (0)
+#define ramoops_write(s)  do { (void)(s); } while (0)
+#define ramoops_region(b, s) ((void)(b), (void)(s), 0)
+#endif
+void arch_dcache_invalidate(void *addr, size_t len);
+
+/* ---------------- fw_cfg (QEMU) ---------------- */
+int  fwcfg_init(void);
+/* Найти файл в каталоге fw_cfg по имени ("etc/ramfb"); возвращает 1 и
+ * записывает селектор + размер. */
+int  fwcfg_find_file(const char *name, uint16_t *select, uint32_t *size);
+/* Записать буфер в файл fw_cfg через DMA-интерфейс. 1 = успех. */
+int  fwcfg_dma_write(uint16_t select, const void *data, uint32_t len);
+
+/* ---------------- ramfb (дисплей) ---------------- */
+/* Просит QEMU показывать наш буфер как экран. Формат — XRGB8888.
+ * 1 = успех; 0, если ramfb не подключён (нет -device ramfb). */
+int  ramfb_setup(void *framebuffer, int width, int height);
+
+/* ---------------- Тактирование (Qualcomm GCC) ----------------
+ * Периферия на Snapdragon по умолчанию обесточена по тактам. Порт UART
+ * достался нам уже включённым от загрузчика, а шину I2C тачскрина
+ * приходится поднимать самим. */
+int  gcc_enable_blsp1_qup_i2c(int qup_index);
+
+/* ---------------- Выводы общего назначения (Qualcomm TLMM) ---------------- */
+void msm_reboot_bootloader(void);
+void msm_reboot_system(void);
+void msm_reboot(uint32_t reason);
+void msm_watchdog_arm(void);
+void msm_arm_crash_to_bootloader(void);
+void msm_watchdog_report(void);
+
+int  keys_gpio_init(void);
+int  keys_gpio_poll(int *down);
+
+uint32_t gcc_qup_i2c_cbcr(int index);
+
+void tlmm_gpio_func(int gpio, int func, int drive_ma, int pull);
+uint32_t tlmm_gpio_cfg(int gpio);
+
+void tlmm_gpio_output(int gpio, int value);
+void tlmm_gpio_input(int gpio, int pull_up);
+void tlmm_gpio_set(int gpio, int value);
+int  tlmm_gpio_get(int gpio);
+void tlmm_gpio_latch_falling(int gpio);
+int  tlmm_gpio_latched(int gpio);
+void tlmm_gpio_latch_off(int gpio);
+
+/* ---------------- Ведущий I2C (Qualcomm QUP v2) ---------------- */
+int  i2c_qup_init(uint64_t base, uint32_t core_hz, uint32_t bus_hz);
+/* Записать wlen байт, затем через ПОВТОРНЫЙ СТАРТ прочитать rlen.
+ * Любую из частей можно опустить, передав нулевую длину. */
+int  i2c_qup_xfer(uint64_t base, uint8_t addr,
+                   const uint8_t *wbuf, int wlen, uint8_t *rbuf, int rlen);
+int  i2c_qup_write_reg(uint64_t base, uint8_t addr, uint8_t reg, uint8_t value);
+int  i2c_qup_read_regs(uint64_t base, uint8_t addr, uint8_t reg, uint8_t *out, int len);
+
+/* Состояние шины после последней передачи. Разделяет два случая, снаружи
+ * неотличимых: устройство промолчало (признак неподтверждения — значит
+ * оно обесточено или его нет) либо ошиблись мы сами. */
+uint32_t i2c_qup_last_status(void);
+void i2c_qup_dump(uint64_t base, const char *where);
+/* Расшифровать состояние шины словами — чтобы не разбирать разряды вручную. */
+void i2c_qup_explain(uint32_t st);
+/* Подробный след каждого шага сессии. Включён по умолчанию. */
+void i2c_qup_trace(int on);
+
+/* ---------------- Ведущий I2C вручную, на обычных выводах ----------------
+ * Запасной путь и одновременно измерительный прибор: он не зависит ни от
+ * чего, кроме самих выводов, и поэтому отделяет отказ контроллера от
+ * отсутствия устройства на шине. */
+int  i2c_bb_init(int sda_gpio, int scl_gpio, uint32_t bus_hz);
+int  i2c_bb_probe(uint8_t addr);
+int  i2c_bb_scan(void);
+int  i2c_bb_xfer(uint8_t addr, const uint8_t *wbuf, int wlen,
+                 uint8_t *rbuf, int rlen);
+int  i2c_bb_read_regs(uint8_t addr, uint8_t reg, uint8_t *out, int len);
+int  i2c_bb_write_reg(uint8_t addr, uint8_t reg, uint8_t value);
+
+/* ---------------- Микросхема питания ----------------
+ *
+ * Тачскрин и приёмопередатчик USB питаются от отдельных источников
+ * внутри неё, и загрузчик, уходя, гасит то, чем сам не пользуется.
+ * Разговор идёт по шине SPMI напрямую, минуя сопроцессор питания. */
+int  spmi_init(void);
+int  spmi_read(uint8_t sid, uint16_t addr, uint8_t *out);
+int  spmi_write(uint8_t sid, uint16_t addr, uint8_t value);
+uint16_t spmi_channel_ppid(int apid);
+int  spmi_channel_count(void);
+/* Кому разрешено писать в узел. Наше ядро исполнения — нулевое; всё
+ * прочее трогать нельзя, запись в чужое роняет процессор. */
+int  spmi_owner_of(uint8_t sid, uint16_t addr);
+
+uint16_t pmic_ldo_base(int n);
+void pmic_ldo_dump(int n);
+void pmic_scan(void);
+void pmic_report_apc(void);
+int  pmic_rtc_seconds(uint32_t *out);
+/* Что записала микросхема питания о прошлом запуске: почему включились,
+ * почему выключились, был ли тёплый сброс. Переживает перезагрузку. */
+void pmic_report_reset_reasons(void);
+
+/* Весь сохранённый журнал этой загрузки — чтобы отдать его в провод
+ * целиком, а не только то, что напечатано после подключения. */
+int ramoops_snapshot(const volatile unsigned char **data, uint32_t *len);
+int  pmic_ldo_enable(int n);
+
+/* ---------------- Чёрный ящик ----------------
+ * Переживает перезагрузку и говорит, чем система была занята в
+ * последний миг. Нужен потому, что аппарат перезагружается сам, а
+ * журнал обрывается задолго до смерти: работающая система печатает
+ * редко. См. arch/arm64/blackbox.c. */
+#define BB_TAG_BOOT    0
+#define BB_TAG_IDLE    1
+#define BB_TAG_INPUT   2
+#define BB_TAG_TOUCH   3
+#define BB_TAG_RENDER  4
+#define BB_TAG_USB     5
+#define BB_TAG_RPM     6
+/* Фазы обмена по I2C — чёрный ящик показал, что смерть приходит внутри
+ * обмена с тачскрином, и надо знать, в какой именно его части. */
+#define BB_TAG_I2C_STATE  7
+#define BB_TAG_I2C_PUSH   8
+#define BB_TAG_I2C_XFER   9
+#define BB_TAG_I2C_IDLE   10
+#define BB_TAG_DRAW_BG    11
+#define BB_TAG_DRAW_APP   12
+#define BB_TAG_DRAW_OSK   13
+#define BB_TAG_DRAW_BARS  14
+#define BB_TAG_PRESENT    15
+
+#ifdef CONFIG_LOG_RAMOOPS
+void blackbox_init(void);
+void blackbox_mark(uint32_t tag);
+void blackbox_heartbeat(void);
+void blackbox_fault(uint64_t index, uint64_t esr, uint64_t far, uint64_t elr);
+void blackbox_note_console(uint32_t used);
+int  blackbox_prev_tail(const char **data, uint32_t *len);
+#else
+/* Плата без памяти, переживающей перезагрузку: записывать некуда, а
+ * вызывающим об этом знать незачем. */
+#define blackbox_init()        do { } while (0)
+#define blackbox_mark(t)       do { (void)(t); } while (0)
+#define blackbox_heartbeat()   do { } while (0)
+#define blackbox_fault(i, e, f, l) do { (void)(i); (void)(e); (void)(f); (void)(l); } while (0)
+#define blackbox_note_console(u)   do { (void)(u); } while (0)
+static inline int blackbox_prev_tail(const char **d, uint32_t *l) { (void)d; (void)l; return 0; }
+#endif
+
+/* ---------------- Ход загрузки на экране ----------------
+ * Показывается вместо текстового журнала: тот уходит в провод и в
+ * сохраняемую область, а на экране видно, что система поднимается. */
+#ifdef CONFIG_EARLY_FB_MARKS
+void boot_anim_begin(void);
+void boot_anim_stage(int done, int total);
+void boot_anim_step(void);
+void boot_anim_tick(void);
+void boot_anim_end(void);
+int  boot_anim_active(void);
+#else
+/* Плата без готового кадра от загрузчика: показывать ход загрузки негде.
+ * Вызывающим об этом знать незачем — как и в случае с early_con. */
+#define boot_anim_begin()           do { } while (0)
+#define boot_anim_stage(d, t)       do { (void)(d); (void)(t); } while (0)
+#define boot_anim_step()            do { } while (0)
+#define boot_anim_end()             do { } while (0)
+#define boot_anim_active()          0
+#endif
+
+/* ---------------- Сопроцессор питания ----------------
+ *
+ * Часть источников питания нам не принадлежит: прямая запись в
+ * микросхему питания для них закрыта и роняет процессор. Их включают,
+ * попросив сопроцессор питания через общую память. */
+int  smem_init(void);
+uint64_t smem_item(int id, uint32_t *size);
+uint64_t smem_item_host(int host, int id, uint32_t *size);
+uint64_t smem_alloc(int id, uint32_t size);
+uint64_t smem_alloc_host(int host, int id, uint32_t size);
+void smem_item_debug(int id);
+
+int  smd_rpm_init(void);
+int  rpm_regulator_enable(uint32_t res_type, uint32_t res_id, uint32_t uv);
+
+/* Вид ресурса — четыре буквы младшим байтом вперёд. У источников
+ * питания это "ldoa" (см. дерево устройств: qcom,resource-name). */
+#define RPM_RES_LDOA  0x616F646Cu
+
+/* ---------------- USB в режиме устройства (Synopsys DWC3) ----------------
+ * Собирается только для плат, где он есть. Всё, что печатается на экран,
+ * попутно уходит в компьютер по проводу — ради этого он и поднимается. */
+int  usb_dwc3_init(void);
+void usb_dwc3_poll(void);
+int  usb_dwc3_ready(void);
+int  usb_dwc3_host_seen(void);
+void usb_dwc3_set_configured(int on);
+
+/* Слой устройства: описания, стандартные запросы, кольцо журнала. */
+int  usb_pos_setup(const uint8_t *req, const uint8_t **data, int *len,
+                   uint8_t *set_addr);
+void usb_pos_reset(void);
+void usb_pos_speed(int mbit);
+void usb_pos_ctrl_data(const uint8_t *data, int len);
+void usb_pos_received(const uint8_t *data, int len);
+int  usb_pos_pull(uint8_t *dst, int max);
+
+/* Положить строку в кольцо для отправки в компьютер. Слабая заглушка в
+ * early_con.c делает вызов бесплатным там, где USB не собран. */
+void usb_log_write(const char *s);
+void usb_pos_after_fault(void);
+
+/* Тактирование USB и сбросы его блоков — в gcc_msm8953.c. */
+int  gcc_enable_usb30(void);
+void gcc_usb_block_reset(int qusb2_phy);
+
+/* ---------------- Тачскрин FocalTech FT5x06 / FT5435 ----------------
+ * Собирается только для плат, у которых он есть (см. Makefile, BOARD).
+ * На прочих сборках вместо этих функций подставляются слабые заглушки в
+ * hal/hal_input_arm64.c, и слой ввода про разницу не знает. */
+int  ft5x06_init(void);
+int  ft5x06_ready(void);
+int  ft5x06_poll(int *x, int *y, int *pressed);
+void ft5x06_range(int *max_x, int *max_y);
+
+/* ---------------- virtio-input (тач/клавиатура) ---------------- */
+void virtio_input_init(void);
+
+typedef struct {
+    uint16_t type;
+    uint16_t code;
+    int32_t  value;
+} vinput_event_t;
+
+/* Неблокирующий опрос: 1 и заполненное событие, если оно есть. */
+int  virtio_input_poll(vinput_event_t *ev);
+/* Диапазон абсолютных координат тачскрина (для масштабирования в пиксели).
+ * 0, если абсолютного устройства не нашлось. */
+int  virtio_input_abs_range(int *max_x, int *max_y);
+/* Сколько устройств ввода удалось поднять. На реальном телефоне ноль. */
+int  virtio_input_device_count(void);
+
+#endif

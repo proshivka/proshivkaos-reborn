@@ -1,0 +1,170 @@
+/* arch/arm64/tlmm.c — выводы общего назначения (GPIO) на Qualcomm TLMM.
+ *
+ * TLMM (Top Level Mode Multiplexer) — блок, который решает, чем является
+ * каждый физический вывод корпуса: обычным GPIO, ножкой I2C, ножкой UART и
+ * так далее. Тачскрину от него нужны ровно два вывода: линия сброса
+ * (мы ею дёргаем) и линия прерывания (её мы опрашиваем).
+ *
+ * Раскладка регистров у TLMM устроена непривычно, но удобно: у каждого
+ * вывода свой отдельный «тайл» размером 4 КиБ, и адрес считается простым
+ * умножением номера вывода. Никаких битовых полей, размазанных по общим
+ * регистрам, — поэтому драйвер такой короткий.
+ *
+ * База 0x01000000 и размер 0x300000 (то есть 768 выводов по 4 КиБ) сняты с
+ * живого устройства: узел pinctrl@1000000, compatible
+ * "qcom,msm8953-pinctrl".
+ */
+#include "arm64.h"
+#include "boards/board.h"
+
+#define TLMM_TILE_SIZE   0x1000
+#define TLMM_MAX_GPIO    150      /* у msm8953 их 142; с запасом на проверку */
+
+/* Смещения внутри тайла вывода */
+#define TLMM_GPIO_CFG    0x00
+#define TLMM_GPIO_IN_OUT 0x04
+
+/* Поля регистра настройки вывода */
+#define CFG_PULL_SHIFT   0
+#define CFG_PULL_NONE    0
+#define CFG_PULL_DOWN    1
+#define CFG_PULL_KEEPER  2
+#define CFG_PULL_UP      3
+#define CFG_FUNC_SHIFT   2        /* 0 = обычный GPIO, прочее — альтернативы */
+#define CFG_DRV_SHIFT    6        /* сила драйвера: (мА / 2) - 1            */
+#define CFG_OE           (1u << 9) /* разрешение выхода                      */
+
+/* Регистр состояния линии */
+#define IN_OUT_IN        (1u << 0) /* чтение: текущий уровень на выводе      */
+#define IN_OUT_OUT       (1u << 1) /* запись: уровень, который выдаём        */
+
+static uint64_t gpio_tile(int gpio) {
+    return BOARD_TLMM_BASE + (uint64_t)gpio * TLMM_TILE_SIZE;
+}
+
+/* Настроить вывод как выход и выставить уровень. */
+void tlmm_gpio_output(int gpio, int value) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+
+    uint64_t t = gpio_tile(gpio);
+
+    /* Уровень выставляем ДО включения выхода: иначе на линии успевает
+       мелькнуть предыдущее значение. Для линии сброса тачскрина такой
+       выброс — это лишний незапланированный сброс. */
+    mmio_write32(t + TLMM_GPIO_IN_OUT, value ? IN_OUT_OUT : 0);
+
+    uint32_t cfg = (CFG_PULL_NONE << CFG_PULL_SHIFT) |
+                   (0u << CFG_FUNC_SHIFT) |          /* обычный GPIO       */
+                   (1u << CFG_DRV_SHIFT)  |          /* 4 мА — хватает     */
+                   CFG_OE;
+    mmio_write32(t + TLMM_GPIO_CFG, cfg);
+    dsb_sy();
+}
+
+/* Настроить вывод как вход с подтяжкой вверх.
+ * Линия прерывания тачскрина активна низким уровнем, поэтому в покое её
+ * нужно что-то удерживать в единице — этим и занимается подтяжка. */
+void tlmm_gpio_input(int gpio, int pull_up) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+
+    uint64_t t = gpio_tile(gpio);
+
+    uint32_t cfg = ((pull_up ? CFG_PULL_UP : CFG_PULL_NONE) << CFG_PULL_SHIFT) |
+                   (0u << CFG_FUNC_SHIFT) |
+                   (1u << CFG_DRV_SHIFT);
+    /* CFG_OE не ставим — это вход. */
+    mmio_write32(t + TLMM_GPIO_CFG, cfg);
+    dsb_sy();
+}
+
+/* Переключить вывод на альтернативную работу.
+ *
+ * Это то, чего не хватало шине I2C. Вывод корпуса сам по себе ничей: он
+ * становится ножкой I2C, UART или обычным GPIO в зависимости от поля
+ * FUNC_SEL. Пока оно в нуле, вывод остаётся обычным GPIO, и сигналы
+ * контроллера шины до микросхемы просто не доходят — сколько ни настраивай
+ * сам контроллер.
+ *
+ * Номер работы берётся из дерева прошивки: узел i2c_3_active просит
+ * function = "blsp_i2c3" для gpio10 и gpio11, а в таблице выводов
+ * msm8953 эта работа идёт третьей.
+ *
+ * drive_ma — сила драйвера в миллиамперах, как в дереве (drive-strength
+ * = 2). Поле хранит (мА / 2 - 1). pull: 0 без подтяжки, 1 вниз, 3 вверх;
+ * у этой шины подтяжки внешние (focaltech,i2c-pull-up).
+ */
+void tlmm_gpio_func(int gpio, int func, int drive_ma, int pull) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+
+    uint32_t drv = (drive_ma >= 2) ? (uint32_t)(drive_ma / 2 - 1) : 0u;
+    if (drv > 7) drv = 7;
+
+    uint32_t cfg = ((uint32_t)(pull & 3) << CFG_PULL_SHIFT) |
+                   ((uint32_t)(func & 0xF) << CFG_FUNC_SHIFT) |
+                   (drv << CFG_DRV_SHIFT);
+    /* Выход не разрешаем: направлением на альтернативной работе
+       распоряжается сам блок, которому вывод отдан. */
+    mmio_write32(gpio_tile(gpio) + TLMM_GPIO_CFG, cfg);
+    dsb_sy();
+}
+
+/* Что сейчас написано в настройке вывода — чтобы показать на экране. */
+uint32_t tlmm_gpio_cfg(int gpio) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return 0xFFFFFFFFu;
+    return mmio_read32(gpio_tile(gpio) + TLMM_GPIO_CFG);
+}
+
+void tlmm_gpio_set(int gpio, int value) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+    mmio_write32(gpio_tile(gpio) + TLMM_GPIO_IN_OUT, value ? IN_OUT_OUT : 0);
+    dsb_sy();
+}
+
+/* ЗАЩЁЛКА ФРОНТА — без прерываний.
+ *
+ * У каждого вывода есть регистр настройки прерывания и регистр его
+ * состояния. Если разрешить только «сырое» состояние, а само прерывание
+ * не включать, блок запоминает спад на линии в разряде состояния, и
+ * никакой обработчик для этого не нужен. Короткий импульс, который опрос
+ * уровня проспал бы, так не теряется.
+ *
+ * Разряды — как в драйвере pinctrl-msm ядра для msm8953: разрешение 0,
+ * полярность 1, вид обнаружения 2..3 (2 — спад), сырое состояние 4,
+ * получатель 5..7 (4 — прикладной процессор). */
+#define TLMM_GPIO_INTR_CFG     0x08
+#define TLMM_GPIO_INTR_STATUS  0x0C
+#define INTR_POL_BIT           (1u << 1)
+#define INTR_DECT_FALLING      (2u << 2)
+#define INTR_RAW_STATUS_EN     (1u << 4)
+#define INTR_TARGET_KPSS       (4u << 5)
+
+void tlmm_gpio_latch_falling(int gpio) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+    uint64_t t = gpio_tile(gpio);
+    mmio_write32(t + TLMM_GPIO_INTR_CFG,
+                 INTR_TARGET_KPSS | INTR_RAW_STATUS_EN | INTR_DECT_FALLING | INTR_POL_BIT);
+    mmio_write32(t + TLMM_GPIO_INTR_STATUS, 0);
+    dsb_sy();
+}
+
+void tlmm_gpio_latch_off(int gpio) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return;
+    uint64_t t = gpio_tile(gpio);
+    mmio_write32(t + TLMM_GPIO_INTR_CFG, 0);
+    mmio_write32(t + TLMM_GPIO_INTR_STATUS, 0);
+    dsb_sy();
+}
+
+/* Был ли спад с прошлого вызова. Защёлку сбрасывает. */
+int tlmm_gpio_latched(int gpio) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return 0;
+    uint64_t t = gpio_tile(gpio);
+    if (!(mmio_read32(t + TLMM_GPIO_INTR_STATUS) & 1u)) return 0;
+    mmio_write32(t + TLMM_GPIO_INTR_STATUS, 0);
+    return 1;
+}
+
+int tlmm_gpio_get(int gpio) {
+    if (gpio < 0 || gpio >= TLMM_MAX_GPIO) return 0;
+    return (mmio_read32(gpio_tile(gpio) + TLMM_GPIO_IN_OUT) & IN_OUT_IN) ? 1 : 0;
+}
