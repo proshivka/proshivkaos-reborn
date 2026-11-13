@@ -57,6 +57,8 @@ extern const touch_app_t app_settings;
 extern const touch_app_t app_files;
 extern const touch_app_t app_about;
 extern const touch_app_t app_wifi;
+extern const touch_app_t app_perf;
+extern const touch_app_t app_calc;
 
 /* --- Настройки, общие для оболочки и приложения "Настройки" --- */
 int  touch_ui_text_scale(void);

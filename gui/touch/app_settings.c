@@ -16,7 +16,10 @@
 #define ROW_DOTS      2
 #define ROW_SCREEN    3
 #define ROW_ABOUT     4
-#define ROW_COUNT     5
+#define ROW_EXIT      5
+#define ROW_COUNT     6
+
+extern void hal_request_exit(void);
 
 static int g_x, g_y, g_w, g_h;
 static int g_row_h;
@@ -97,10 +100,10 @@ static void settings_render(void) {
 
     /* --- Обои --- */
     draw_row(ROW_WALLPAPER, "WALLPAPER");
-    static const char *wp_labels[2] = { "GRAD", "FLAT" };
-    for (int i = 0; i < 2; i++) {
+    static const char *wp_labels[4] = { "DEEP", "OLED", "CYBER", "SUN" };
+    for (int i = 0; i < 4; i++) {
         int x, y, w, h;
-        control_rect(ROW_WALLPAPER, i, 2, &x, &y, &w, &h);
+        control_rect(ROW_WALLPAPER, i, 4, &x, &y, &w, &h);
         int active = (touch_ui_wallpaper_mode() == i);
         int pressed = (g_pressed_row == ROW_WALLPAPER && g_pressed_slot == i);
         touch_draw_button(x, y, w, h, wp_labels[i], pressed,
@@ -144,13 +147,24 @@ static void settings_render(void) {
         row_rect(ROW_ABOUT, &rx, &ry, &rw, &rh);
         draw_chevron(rx + rw - TM.pad * 3, ry + rh / 2, TM.touch / 6, GFX_UI_TEXT_DIM);
     }
+
+    /* --- Выход в Android --- */
+    draw_row(ROW_EXIT, "EXIT TO ANDROID");
+    {
+        int rx, ry, rw, rh;
+        row_rect(ROW_EXIT, &rx, &ry, &rw, &rh);
+        int cw = TM.touch * 2;
+        int bx = rx + rw - TM.pad - cw;
+        int by = ry + (rh - TM.touch) / 2;
+        touch_draw_button(bx, by, cw, TM.touch, "EXIT",
+                          g_pressed_whole_row == ROW_EXIT,
+                          GFX_UI_WARN, GFX_UI_ACCENT_DARK);
+    }
 }
 
 /* Какая кнопка под пальцем. Возвращает 1 и заполняет row/slot. */
 static int find_control(int px, int py, int *row, int *slot) {
-    /* Сколько отдельных кнопок в каждом ряду. Нулевые ряды нажимаются
-       целиком — см. find_whole_row(). */
-    static const int counts[ROW_COUNT] = { 3, 2, 1, 0, 0 };
+    static const int counts[ROW_COUNT] = { 3, 4, 1, 0, 0, 0 };
 
     for (int r = 0; r < ROW_COUNT; r++) {
         for (int s = 0; s < counts[r]; s++) {
@@ -169,7 +183,10 @@ static int find_control(int px, int py, int *row, int *slot) {
 static int find_whole_row(int px, int py) {
     int x, y, w, h;
     row_rect(ROW_ABOUT, &x, &y, &w, &h);
-    return touch_hit(px, py, x, y, w, h) ? ROW_ABOUT : -1;
+    if (touch_hit(px, py, x, y, w, h)) return ROW_ABOUT;
+    row_rect(ROW_EXIT, &x, &y, &w, &h);
+    if (touch_hit(px, py, x, y, w, h)) return ROW_EXIT;
+    return -1;
 }
 
 static void settings_on_touch(int type, int x, int y) {
@@ -201,6 +218,10 @@ static void settings_on_touch(int type, int x, int y) {
     g_pressed_whole_row = -1;
     if (was_whole == ROW_ABOUT && find_whole_row(x, y) == ROW_ABOUT) {
         touch_ui_open("ABOUT");
+        return;
+    }
+    if (was_whole == ROW_EXIT && find_whole_row(x, y) == ROW_EXIT) {
+        hal_request_exit();
         return;
     }
 

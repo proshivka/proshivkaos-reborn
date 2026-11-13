@@ -1,5 +1,6 @@
 /* gui/touch/touch_theme.c */
 #include "touch_theme.h"
+#include "touch_app.h"
 #include "hal.h"
 #include "icon.h"
 
@@ -48,6 +49,19 @@ void touch_theme_content_rect(int *x, int *y, int *w, int *h) {
 }
 
 void touch_draw_wallpaper(void) {
+    int mode = touch_ui_wallpaper_mode();
+    if (mode == 1) { /* AMOLED Pure Black */
+        hal_gfx_fill_rect(0, 0, TM.screen_w, TM.screen_h, GFX_BLACK);
+        return;
+    } else if (mode == 2) { /* Cyber Blue Gradient */
+        static const uint8_t cyber[3] = { GFX_UI_ACCENT, GFX_UI_ACCENT_DARK, GFX_UI_BG };
+        hal_gfx_dither_gradient_multi(0, 0, TM.screen_w, TM.screen_h, cyber, 3);
+        return;
+    } else if (mode == 3) { /* Sunset Purple */
+        static const uint8_t sunset[3] = { GFX_UI_WARN, GFX_HERO_BG_MID, GFX_UI_BG };
+        hal_gfx_dither_gradient_multi(0, 0, TM.screen_w, TM.screen_h, sunset, 3);
+        return;
+    }
     static const uint8_t grad[3] = { GFX_UI_GRAD_TOP, GFX_UI_GRAD_MID, GFX_UI_GRAD_BOT };
     hal_gfx_dither_gradient_multi(0, 0, TM.screen_w, TM.screen_h, grad, 3);
 }

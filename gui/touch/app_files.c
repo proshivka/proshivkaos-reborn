@@ -32,6 +32,8 @@ static int g_drag_start_y = 0;
 static int g_drag_start_scroll = 0;
 static int g_drag_distance = 0;
 static int g_pressed_row = -1;
+static int g_velocity = 0;
+static int g_last_drag_y = 0;
 
 static void str_copy(char *dst, const char *src, int max) {
     int i = 0;
@@ -68,6 +70,7 @@ static void files_init(void) {
     str_copy(g_cwd, "/", sizeof(g_cwd));
     g_mode = MODE_LIST;
     g_scroll = 0;
+    g_velocity = 0;
 }
 
 static void files_layout(int x, int y, int w, int h) {
@@ -212,8 +215,10 @@ static void files_on_touch(int type, int x, int y) {
 
     if (type == HAL_EV_POINTER_DOWN) {
         g_drag_start_y = y;
+        g_last_drag_y = y;
         g_drag_start_scroll = g_scroll;
         g_drag_distance = 0;
+        g_velocity = 0;
         g_pressed_row = (g_mode == MODE_LIST) ? row_at(y) : -1;
         return;
     }
@@ -223,8 +228,11 @@ static void files_on_touch(int type, int x, int y) {
         if (dy < 0) dy = -dy;
         if (dy > g_drag_distance) g_drag_distance = dy;
 
+        g_velocity = y - g_last_drag_y;
+        g_last_drag_y = y;
+
         /* Как только палец уехал заметно — это прокрутка, а не нажатие. */
-        if (g_drag_distance > TM.touch / 3) {
+        if (g_drag_distance > TM.touch / 4) {
             g_pressed_row = -1;
             g_scroll = g_drag_start_scroll - (y - g_drag_start_y);
 
@@ -233,7 +241,7 @@ static void files_on_touch(int type, int x, int y) {
                 int n = (int)ramfs_list_dir(g_cwd, files, RAMFS_MAX_ENTRIES);
                 clamp_scroll(n * g_row_h);
             } else {
-                clamp_scroll(g_h * 4);   /* грубая оценка длины файла */
+                clamp_scroll(g_h * 4);
             }
         }
         return;
@@ -244,8 +252,8 @@ static void files_on_touch(int type, int x, int y) {
     int was_row = g_pressed_row;
     g_pressed_row = -1;
 
-    /* Тянули — значит прокручивали, ничего не открываем. */
-    if (g_drag_distance > TM.touch / 3) return;
+    /* Тянули — значит прокручивали */
+    if (g_drag_distance > TM.touch / 4) return;
 
     /* Кнопка "наверх" в заголовке */
     if (touch_hit(x, y, hx, hy, hw, hh)) {
@@ -269,6 +277,23 @@ static void files_on_touch(int type, int x, int y) {
     }
 }
 
+static int files_tick(void) {
+    if (g_velocity != 0) {
+        g_scroll -= g_velocity;
+        if (g_mode == MODE_LIST) {
+            const ramfs_file_t *files[RAMFS_MAX_ENTRIES];
+            int n = (int)ramfs_list_dir(g_cwd, files, RAMFS_MAX_ENTRIES);
+            clamp_scroll(n * g_row_h);
+        } else {
+            clamp_scroll(g_h * 4);
+        }
+        g_velocity = (g_velocity * 88) / 100;
+        if (g_velocity >= -1 && g_velocity <= 1) g_velocity = 0;
+        return 1;
+    }
+    return 0;
+}
+
 static void files_on_key(int key) { (void)key; }
 static int  files_wants_keyboard(void) { return 0; }
 
@@ -283,5 +308,6 @@ const touch_app_t app_files = {
     .render = files_render,
     .on_touch = files_on_touch,
     .on_key = files_on_key,
-    .wants_keyboard = files_wants_keyboard
+    .wants_keyboard = files_wants_keyboard,
+    .tick  = files_tick
 };

@@ -43,9 +43,35 @@ static const touch_app_t *const g_apps[] = {
     &app_files,
     &app_settings,
     &app_wifi,
-    &app_about
+    &app_about,
+    &app_perf,
+    &app_calc
 };
 #define APP_COUNT ((int)(sizeof(g_apps) / sizeof(g_apps[0])))
+
+/* ---------------- Анимации переходов ---------------- */
+#define ANIM_NONE  0
+#define ANIM_OPEN  1
+#define ANIM_CLOSE 2
+
+static int      g_anim_mode = ANIM_NONE;
+static uint64_t g_anim_t0_ms = 0;
+static int      g_anim_app_idx = -1;
+static int      g_anim_duration = 160; /* ms */
+
+static int      g_anim_icon_x = 0, g_anim_icon_y = 0;
+static int      g_anim_icon_w = 0, g_anim_icon_h = 0;
+
+__attribute__((weak)) int hal_should_exit(void) { return 0; }
+__attribute__((weak)) void hal_request_exit(void) {}
+
+static int ease_out_cubic_1024(int t) {
+    if (t <= 0) return 0;
+    if (t >= 1024) return 1024;
+    long f = 1024 - t;
+    long f3 = (f * f * f) >> 20;
+    return (int)(1024 - f3);
+}
 
 static int g_screen  = SCREEN_HOME;
 static int g_current = -1;                 /* индекс активного приложения */
@@ -136,8 +162,21 @@ void touch_ui_open(const char *app_name) {
         if (str_same(g_apps[i]->name, app_name)) { launch_app(i); return; }
 }
 
+static void icon_rect(int index, int *x, int *y, int *w, int *h);
+
 void touch_ui_go_home(void) {
+    if (g_screen == SCREEN_APP && g_current >= 0) {
+        icon_rect(g_current, &g_anim_icon_x, &g_anim_icon_y, &g_anim_icon_w, &g_anim_icon_h);
+        g_anim_mode = ANIM_CLOSE;
+        g_anim_t0_ms = hal_time_ms();
+        g_anim_app_idx = g_current;
+        osk_set_visible(0);
+        g_app_on_screen = -1;
+        need_redraw(R_ALL);
+        return;
+    }
     g_screen = SCREEN_HOME;
+    g_anim_mode = ANIM_NONE;
     osk_set_visible(0);
     g_app_on_screen = -1;
     need_redraw(R_ALL);
@@ -185,24 +224,22 @@ void touch_ui_keyboard(int on) {
 static void launch_app(int index) {
     if (index < 0 || index >= APP_COUNT) return;
 
-    g_current = index;
-    g_screen  = SCREEN_APP;
-    g_app_on_screen = -1;
-    need_redraw(R_ALL);
-
     if (!g_launched[index]) {
         g_apps[index]->init();
         g_launched[index] = 1;
     }
 
-    hal_debug_mark(15, 255, 128, 0);   /* приложение поднято */
+    g_current = index;
+    icon_rect(index, &g_anim_icon_x, &g_anim_icon_y, &g_anim_icon_w, &g_anim_icon_h);
+    g_anim_mode = ANIM_OPEN;
+    g_anim_t0_ms = hal_time_ms();
+    g_anim_app_idx = index;
 
-    /* Клавиатура появляется сама, если приложению есть куда печатать —
-       иначе пользователю пришлось бы искать, чем её вызвать. */
+    g_app_on_screen = -1;
+    need_redraw(R_ALL);
+
     osk_set_visible(g_apps[index]->wants_keyboard());
     relayout_current_app();
-
-    hal_debug_mark(16, 0, 255, 128);   /* раскладка посчитана */
 }
 
 /* ---------------- Статусбар ---------------- */
@@ -231,15 +268,21 @@ static void draw_status_bar(void) {
     hal_gfx_draw_string_scaled(TM.screen_w - TM.pad - tw, ty, buf,
                                 GFX_UI_TEXT, TM.scale_small);
 
-    /* Индикатор батареи. Настоящего датчика заряда на QEMU нет, а на
-       телефоне он читается через PMIC по I2C — это отдельный драйвер.
-       Пока рисуем корпус без заливки, чтобы место под него было
-       предусмотрено в раскладке. */
-    int bw = TM.status_h / 2 + 6, bh = TM.status_h / 2 - 2;
+    /* Индикатор батареи с заливкой уровня */
+    int bw = TM.status_h / 2 + 8, bh = TM.status_h / 2 - 2;
     int bx = TM.screen_w - TM.pad - tw - TM.pad - bw;
     int by = (TM.status_h - bh) / 2;
     hal_gfx_draw_rect(bx, by, bw, bh, GFX_UI_TEXT_DIM);
     hal_gfx_fill_rect(bx + bw, by + bh / 3, 2, bh / 3, GFX_UI_TEXT_DIM);
+    int fill_w = (bw - 4) * 85 / 100;
+    if (fill_w > 0) hal_gfx_fill_rect(bx + 2, by + 2, fill_w, bh - 4, GFX_UI_OK);
+
+    /* Кнопка "EXIT" в статусбаре для быстрого возврата в Android */
+    int ew = TM.touch + TM.pad;
+    int ex = bx - TM.pad - ew;
+    if (ex > TM.pad + 120) {
+        touch_draw_button(ex, 2, ew, TM.status_h - 4, "EXIT", 0, GFX_UI_SURFACE_2, GFX_UI_SURFACE);
+    }
 }
 
 /* ---------------- Панель навигации ---------------- */
@@ -417,6 +460,61 @@ static void render_app(void) {
 
 static void render_frame(void) {
     hal_debug_activity(HAL_ACT_RENDER);
+
+    if (g_anim_mode != ANIM_NONE) {
+        uint64_t dt = hal_time_ms() - g_anim_t0_ms;
+        int progress = (int)((dt * 1024) / (unsigned)g_anim_duration);
+
+        if (progress >= 1024) {
+            if (g_anim_mode == ANIM_OPEN) {
+                g_anim_mode = ANIM_NONE;
+                g_screen = SCREEN_APP;
+                g_current = g_anim_app_idx;
+                render_app();
+            } else {
+                g_anim_mode = ANIM_NONE;
+                g_screen = SCREEN_HOME;
+                touch_draw_wallpaper();
+                draw_home();
+            }
+        } else {
+            touch_draw_wallpaper();
+            draw_home();
+
+            int e = (g_anim_mode == ANIM_OPEN) ? ease_out_cubic_1024(progress) : (1024 - ease_out_cubic_1024(progress));
+
+            int cx = (int)(((long)g_anim_icon_x * (1024 - e)) >> 10);
+            int cy = (int)(((long)g_anim_icon_y * (1024 - e)) >> 10);
+            int cw = g_anim_icon_w + (int)(((long)(TM.screen_w - g_anim_icon_w) * e) >> 10);
+            int ch = g_anim_icon_h + (int)(((long)(TM.screen_h - g_anim_icon_h) * e) >> 10);
+            int cr = (int)(((long)TM.radius * 2 * (1024 - e)) >> 10);
+            if (cr < 0) cr = 0;
+
+            hal_gfx_fill_rounded_rect(cx, cy, cw, ch, GFX_UI_SURFACE, cr);
+
+            if (e < 450) {
+                int is = g_anim_icon_w;
+                touch_draw_app_icon(cx + (cw - is) / 2, cy + (ch - is) / 2, is,
+                                    g_apps[g_anim_app_idx]->icon,
+                                    g_apps[g_anim_app_idx]->glyph,
+                                    "",
+                                    g_apps[g_anim_app_idx]->color,
+                                    g_apps[g_anim_app_idx]->color2,
+                                    0);
+            } else {
+                hal_gfx_set_clip(cx, cy, cw, ch);
+                g_current = g_anim_app_idx;
+                render_app();
+                hal_gfx_reset_clip();
+            }
+            need_redraw(R_ALL);
+        }
+        draw_status_bar();
+        draw_nav_bar();
+        hal_gfx_present();
+        return;
+    }
+
     if (g_screen == SCREEN_APP && g_current >= 0) {
         /* Приложение рисует свой фон само — обои под ним не нужны и
            только съедали бы время на заливку целого экрана. */
@@ -627,6 +725,16 @@ static void handle_pointer(int type, int x, int y) {
     /* Палец ушёл с клавиатуры мимо — снимаем подсветку клавиши. */
     if (osk_visible()) { osk_handle_pointer(type, x, y); need_redraw(R_OSK); }
 
+    /* Нажатие кнопки EXIT в статусбаре для возврата в Android */
+    if (y < TM.status_h) {
+        int ew = TM.touch + TM.pad;
+        int ex = TM.screen_w - TM.pad - 120 - ew;
+        if (x >= ex - TM.pad && x <= TM.screen_w - 50) {
+            hal_request_exit();
+            return;
+        }
+    }
+
     need_redraw(R_ALL);
 
     if (g_screen == SCREEN_HOME) {
@@ -830,6 +938,11 @@ static void handle_key(int key) {
 
 /* ---------------- Точка входа ---------------- */
 
+#ifndef PROSHIVKA_SCREEN_W
+#define PROSHIVKA_SCREEN_W 1080
+#define PROSHIVKA_SCREEN_H 2340
+#endif
+
 void touch_main(void) {
     hal_gfx_init();
 
@@ -898,6 +1011,10 @@ void touch_main(void) {
     render_frame();
 
     for (;;) {
+        if (hal_should_exit()) break;
+
+        uint64_t frame_start_us = hal_time_us();
+
         hal_input_event_t ev;
         while (hal_input_poll(&ev)) {
             if (ev.type == HAL_EV_KEY) handle_key(ev.key);
@@ -963,5 +1080,11 @@ void touch_main(void) {
         }
 
         g_redraw = 0;
+
+        /* Ограничение частоты кадров ~60 FPS для стабильности и плавности */
+        uint64_t elapsed_us = hal_time_us() - frame_start_us;
+        if (elapsed_us < 16666) {
+            hal_time_delay_us((uint32_t)(16666 - elapsed_us));
+        }
     }
 }

@@ -340,6 +340,8 @@ TOUCH_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     gui/touch/app_files.c \
     gui/touch/app_about.c \
     gui/touch/app_wifi.c \
+    gui/touch/app_perf.c \
+    gui/touch/app_calc.c \
     gui/touch/touch_ui.c
 
 # ============================================================================
@@ -670,6 +672,47 @@ image-run: image
 	    -serial mon:stdio
 
 endif
+
+# ============================================================================
+#  Сборка для Android Switcher (Galaxy A15 / MT6789 / LowykOS Switcher)
+# ============================================================================
+SWITCHER_CC := aarch64-linux-gnu-gcc
+SWITCHER_STRIP := aarch64-linux-gnu-strip
+
+SWITCHER_SOURCES := \
+    gui/palette.c \
+    gui/gfxfb.c \
+    gui/hal_gfx.c \
+    gui/font8x8.c \
+    gui/font.c \
+    gui/font_data.c \
+    gui/icon.c \
+    gui/icon_data.c \
+    gui/window.c \
+    gui/cursor.c \
+    gui/gconsole.c \
+    gui/terminal_app.c \
+    gui/touch/touch_theme.c \
+    gui/touch/osk.c \
+    gui/touch/app_terminal.c \
+    gui/touch/app_settings.c \
+    gui/touch/app_files.c \
+    gui/touch/app_about.c \
+    gui/touch/app_wifi.c \
+    gui/touch/app_perf.c \
+    gui/touch/app_calc.c \
+    gui/touch/touch_ui.c \
+    fs/ramfs.c \
+    kernel/kstring.c \
+    arch/switcher/hal_switcher.c
+
+switcher:
+	@mkdir -p build/switcher
+	$(SWITCHER_CC) -static -O3 -Wall -Wextra \
+	    -I. -Igui -Igui/touch -Ihal -Ifs -Ikernel -Iarch/switcher \
+	    $(SWITCHER_SOURCES) -lm -o build/switcher/init
+	$(SWITCHER_STRIP) build/switcher/init
+	@echo "Built build/switcher/init"
 
 # ============================================================================
 clean:

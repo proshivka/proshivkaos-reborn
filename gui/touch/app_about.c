@@ -31,9 +31,12 @@ static int g_content_h = 0;
 static int g_drag_start_y = 0;
 static int g_drag_start_scroll = 0;
 static int g_drag_distance = 0;
+static int g_velocity = 0;
+static int g_last_drag_y = 0;
 
 static void about_init(void) {
     g_scroll = 0;
+    g_velocity = 0;
 }
 
 static void about_layout(int x, int y, int w, int h) {
@@ -84,10 +87,19 @@ static void uptime_text(char *buf, int max) {
     touch_strcat(buf, pos, max, touch_itoa((int)(total % 60), num, 2));
 }
 
-/* "PROSHIVKA ARM64" — то, что на телефоне было бы моделью аппарата. */
+/* "SAMSUNG GALAXY A15" / "PROSHIVKA ARM64" */
+__attribute__((weak)) const char *hal_platform_device_model(void) { return "Samsung Galaxy A15"; }
+
 static void device_text(char *buf, int max) {
-    int pos = touch_strcat(buf, 0, max, "PROSHIVKA ");
-    touch_strcat(buf, pos, max, hal_arch_name());
+    const char *model = hal_platform_device_model();
+    if (model && model[0]) {
+        int pos = 0;
+        buf[0] = '\0';
+        touch_strcat(buf, pos, max, model);
+    } else {
+        int pos = touch_strcat(buf, 0, max, "PROSHIVKA ");
+        touch_strcat(buf, pos, max, hal_arch_name());
+    }
 }
 
 /* ---------------- карточка-герой ---------------- */
@@ -272,8 +284,10 @@ static void about_on_touch(int type, int x, int y) {
 
     if (type == HAL_EV_POINTER_DOWN) {
         g_drag_start_y = y;
+        g_last_drag_y = y;
         g_drag_start_scroll = g_scroll;
         g_drag_distance = 0;
+        g_velocity = 0;
         return;
     }
 
@@ -282,7 +296,10 @@ static void about_on_touch(int type, int x, int y) {
         if (dy < 0) dy = -dy;
         if (dy > g_drag_distance) g_drag_distance = dy;
 
-        if (g_drag_distance > TM.touch / 3) {
+        g_velocity = y - g_last_drag_y;
+        g_last_drag_y = y;
+
+        if (g_drag_distance > TM.touch / 4) {
             g_scroll = g_drag_start_scroll - (y - g_drag_start_y);
             clamp_scroll();
         }
@@ -291,11 +308,22 @@ static void about_on_touch(int type, int x, int y) {
 
     if (type != HAL_EV_POINTER_UP) return;
 
-    /* Тянули — значит прокручивали, нажатие не засчитываем. */
-    if (g_drag_distance > TM.touch / 3) return;
+    /* Тянули — значит прокручивали, запускаем инерцию */
+    if (g_drag_distance > TM.touch / 4) return;
 
     if (touch_hit_padded(x, y, bx, by, bw, bh))
         touch_ui_go_home();
+}
+
+static int about_tick(void) {
+    if (g_velocity != 0) {
+        g_scroll -= g_velocity;
+        clamp_scroll();
+        g_velocity = (g_velocity * 88) / 100;
+        if (g_velocity >= -1 && g_velocity <= 1) g_velocity = 0;
+        return 1;
+    }
+    return 0;
 }
 
 static void about_on_key(int key) { (void)key; }
@@ -305,12 +333,14 @@ const touch_app_t app_about = {
     .name  = "ABOUT",
     .glyph = "?",
     .icon  = ICON_INFO + 1,
-    .color = GFX_UI_ACCENT3,
-    .color2 = GFX_UI_ACCENT3_DARK,
+    .color = GFX_UI_ACCENT,
+    .color2 = GFX_UI_ACCENT_DARK,
     .init  = about_init,
     .layout = about_layout,
     .render = about_render,
+    .invalidate = 0,
     .on_touch = about_on_touch,
     .on_key = about_on_key,
-    .wants_keyboard = about_wants_keyboard
+    .wants_keyboard = about_wants_keyboard,
+    .tick  = about_tick
 };
