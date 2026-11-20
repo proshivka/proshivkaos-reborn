@@ -188,7 +188,7 @@ LIBGCC := $(shell $(CC) $(ARCH_CFLAGS) -print-libgcc-file-name 2>/dev/null)
 CFLAGS := -std=gnu11 -ffreestanding -fno-stack-protector -fno-pie -nostdlib \
           -fno-builtin -Wall -Wextra -O2 $(ARCH_CFLAGS) \
           -DPROSHIVKA_SCREEN_W=$(SCREEN_W) -DPROSHIVKA_SCREEN_H=$(SCREEN_H) \
-          -Ihal -Ifs -Ishell -Iapps -Igui -Igui/touch -Iarch/$(ARCH) \
+          -Ihal -Ifs -Ishell -Iapps -Inet -Igui -Igui/touch -Iarch/$(ARCH) \
           $(EXTRA_CFLAGS)
 
 # ============================================================================
@@ -233,7 +233,9 @@ ifeq ($(ARCH),x86)
       kernel/kernel.c kernel/panic.c \
       hal/hal_console.c \
       arch/x86/vga.c arch/x86/keyboard.c arch/x86/cpu.c \
-	  shell/shell.c apps/editor.c
+      arch/x86/pci.c arch/x86/net_rtl8139.c \
+      net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \
+	  shell/shell.c shell/lineedit.c apps/editor.c
   TEXT_ASM := boot/boot.asm
 
   # Графический бэкенд экрана и ввода
@@ -269,8 +271,9 @@ else
 
   TEXT_SOURCES := $(CORE_SOURCES) $(ARCH_BASE_SOURCES) \
       kernel/kernel.c kernel/panic.c \
-      hal/hal_console_arm64.c \
-      shell/shell.c apps/editor.c
+      hal/hal_console_arm64.c hal/hal_net_stub.c \
+      net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \
+      shell/shell.c shell/lineedit.c apps/editor.c
   TEXT_ASM :=
 
   ARCH_GFX_SOURCES := \
@@ -325,6 +328,15 @@ GUI_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     gui/wallpaper_320x200.c gui/wallpaper_640x480.c gui/wallpaper_800x600.c \
     gui/cursor.c gui/gconsole.c gui/terminal_app.c gui/settings_app.c gui/wm.c
 
+# Сеть в окне терминала (только x86): драйвер карты, стек и сетевые команды.
+# terminal_app.c общий с тач-сборкой, поэтому сеть подключается не в нём, а
+# через gui/terminal_net.c — в тач-сборке этого файла нет, и ничего не меняется.
+ifeq ($(ARCH),x86)
+  GUI_SOURCES += arch/x86/net_rtl8139.c \
+      net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c net/netcmd.c \
+      gui/terminal_net.c
+endif
+
 # --- Тач-интерфейс (обе архитектуры) ---------------------------------------
 # Запечённые обои (gui/wallpaper_*.c) сюда НЕ входят намеренно: они
 # нарисованы под landscape-разрешения 4:3 и на портретном экране телефона
@@ -340,8 +352,6 @@ TOUCH_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     gui/touch/app_files.c \
     gui/touch/app_about.c \
     gui/touch/app_wifi.c \
-    gui/touch/app_perf.c \
-    gui/touch/app_calc.c \
     gui/touch/touch_ui.c
 
 # ============================================================================
@@ -613,17 +623,21 @@ bootimg-raw: $(PACKED_RAW)
 # ============================================================================
 ifeq ($(ARCH),x86)
 
+# Сетевая карта RTL8139 в user-режиме QEMU (NAT): шлюз 10.0.2.2, наш адрес
+# 10.0.2.15. Отключить: make run NET=
+NET ?= -netdev user,id=n0 -device rtl8139,netdev=n0
+
 run: $(KERNEL_ELF)
-	$(QEMU) -kernel $(KERNEL_ELF)
+	$(QEMU) -kernel $(KERNEL_ELF) $(NET)
 
 run-big: $(KERNEL_ELF)
-	$(QEMU) -kernel $(KERNEL_ELF) -display sdl
+	$(QEMU) -kernel $(KERNEL_ELF) -display sdl $(NET)
 
 gui-run: $(GUI_ELF)
-	$(QEMU) -kernel $(GUI_ELF)
+	$(QEMU) -kernel $(GUI_ELF) $(NET)
 
 gui-run-big: $(GUI_ELF)
-	$(QEMU) -kernel $(GUI_ELF) -display sdl
+	$(QEMU) -kernel $(GUI_ELF) -display sdl $(NET)
 
 # На x86 пальцем работает мышь: hal_input_x86.c переводит её относительные
 # смещения в те же события "нажали/ведут/отпустили", что приходят с
@@ -672,47 +686,6 @@ image-run: image
 	    -serial mon:stdio
 
 endif
-
-# ============================================================================
-#  Сборка для Android Switcher (Galaxy A15 / MT6789 / LowykOS Switcher)
-# ============================================================================
-SWITCHER_CC := aarch64-linux-gnu-gcc
-SWITCHER_STRIP := aarch64-linux-gnu-strip
-
-SWITCHER_SOURCES := \
-    gui/palette.c \
-    gui/gfxfb.c \
-    gui/hal_gfx.c \
-    gui/font8x8.c \
-    gui/font.c \
-    gui/font_data.c \
-    gui/icon.c \
-    gui/icon_data.c \
-    gui/window.c \
-    gui/cursor.c \
-    gui/gconsole.c \
-    gui/terminal_app.c \
-    gui/touch/touch_theme.c \
-    gui/touch/osk.c \
-    gui/touch/app_terminal.c \
-    gui/touch/app_settings.c \
-    gui/touch/app_files.c \
-    gui/touch/app_about.c \
-    gui/touch/app_wifi.c \
-    gui/touch/app_perf.c \
-    gui/touch/app_calc.c \
-    gui/touch/touch_ui.c \
-    fs/ramfs.c \
-    kernel/kstring.c \
-    arch/switcher/hal_switcher.c
-
-switcher:
-	@mkdir -p build/switcher
-	$(SWITCHER_CC) -static -O3 -Wall -Wextra \
-	    -I. -Igui -Igui/touch -Ihal -Ifs -Ikernel -Iarch/switcher \
-	    $(SWITCHER_SOURCES) -lm -o build/switcher/init
-	$(SWITCHER_STRIP) build/switcher/init
-	@echo "Built build/switcher/init"
 
 # ============================================================================
 clean:
