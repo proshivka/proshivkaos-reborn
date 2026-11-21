@@ -26,10 +26,13 @@ static void out_flush(void *ctx) {
     if (redraw_cb) redraw_cb();
 }
 
+static int out_getkey(void *ctx) { return terminal_app_raw_getc((terminal_app_t *)ctx); }
+static void out_raw(void *ctx, int on) { terminal_app_set_raw((terminal_app_t *)ctx, on); }
+
 static int net_command(terminal_app_t *app, int argc, char *argv[]) {
     if (argc < 1 || !netcmd_is(argv[0])) return 0;
 
-    net_out_t out = { out_putc, out_style, out_flush, app, 1 };
+    net_out_t out = { out_putc, out_style, out_flush, app, 1, out_getkey, out_raw };
 
     if (!have_nic) {
         out_putc(app, '\n');
@@ -44,6 +47,7 @@ static int net_command(terminal_app_t *app, int argc, char *argv[]) {
     app->busy = 1;
     app->cancel = 0;
     netcmd_exec(&out, argc, argv);
+    terminal_app_set_raw(app, 0);
     app->busy = 0;
     app->cancel = 0;
     return 1;
@@ -57,5 +61,5 @@ void terminal_net_install(void (*redraw)(void), int (*pump)(void)) {
     net_set_pump(pump);
 
     terminal_app_set_ext_command(net_command);
-    terminal_app_set_ext_help("IFCONFIG ARPING PING DHCP UDPSEND NSLOOKUP HTTP");
+    terminal_app_set_ext_help("IFCONFIG ARPING PING DHCP UDPSEND NSLOOKUP HTTP SSH");
 }

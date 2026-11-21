@@ -188,7 +188,7 @@ LIBGCC := $(shell $(CC) $(ARCH_CFLAGS) -print-libgcc-file-name 2>/dev/null)
 CFLAGS := -std=gnu11 -ffreestanding -fno-stack-protector -fno-pie -nostdlib \
           -fno-builtin -Wall -Wextra -O2 $(ARCH_CFLAGS) \
           -DPROSHIVKA_SCREEN_W=$(SCREEN_W) -DPROSHIVKA_SCREEN_H=$(SCREEN_H) \
-          -Ihal -Ifs -Ishell -Iapps -Inet -Igui -Igui/touch -Iarch/$(ARCH) \
+          -Ihal -Ifs -Ishell -Iapps -Inet -Inet/ssh -Igui -Igui/touch -Iarch/$(ARCH) \
           $(EXTRA_CFLAGS)
 
 # ============================================================================
@@ -233,9 +233,10 @@ ifeq ($(ARCH),x86)
       kernel/kernel.c kernel/panic.c \
       hal/hal_console.c \
       arch/x86/vga.c arch/x86/keyboard.c arch/x86/cpu.c \
-      arch/x86/pci.c arch/x86/net_rtl8139.c \
+      arch/x86/pci.c arch/x86/net_rtl8139.c arch/x86/entropy.c \
       net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \
-	  shell/shell.c shell/lineedit.c apps/editor.c
+      net/netcmd.c net/ssh/sha2.c net/ssh/ed25519.c net/ssh/chachapoly.c net/ssh/ssh.c \
+	  shell/shell.c shell/shell_netcmd.c shell/lineedit.c apps/editor.c
   TEXT_ASM := boot/boot.asm
 
   # Графический бэкенд экрана и ввода
@@ -271,9 +272,10 @@ else
 
   TEXT_SOURCES := $(CORE_SOURCES) $(ARCH_BASE_SOURCES) \
       kernel/kernel.c kernel/panic.c \
-      hal/hal_console_arm64.c hal/hal_net_stub.c \
+      hal/hal_console_arm64.c hal/hal_net_stub.c hal/hal_entropy_stub.c \
       net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \
-      shell/shell.c shell/lineedit.c apps/editor.c
+      net/netcmd.c net/ssh/sha2.c net/ssh/ed25519.c net/ssh/chachapoly.c net/ssh/ssh.c \
+      shell/shell.c shell/shell_netcmd.c shell/lineedit.c apps/editor.c
   TEXT_ASM :=
 
   ARCH_GFX_SOURCES := \
@@ -334,6 +336,7 @@ GUI_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
 ifeq ($(ARCH),x86)
   GUI_SOURCES += arch/x86/net_rtl8139.c \
       net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c net/netcmd.c \
+      net/ssh/sha2.c net/ssh/ed25519.c net/ssh/chachapoly.c net/ssh/ssh.c arch/x86/entropy.c \
       gui/terminal_net.c
 endif
 

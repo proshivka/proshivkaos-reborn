@@ -25,6 +25,18 @@ void terminal_app_set_ext_command(terminal_ext_cmd_fn fn) { ext_cmd = fn; }
 void terminal_app_set_ext_help(const char *text)         { ext_help = text; }
 int  terminal_app_cancel_requested(const terminal_app_t *app) { return app->cancel; }
 
+void terminal_app_set_raw(terminal_app_t *app, int on) {
+    app->raw = on;
+    app->rq_head = app->rq_tail = 0;                 /* то, что набрано «до», не должно попасть в сеанс */
+}
+
+int terminal_app_raw_getc(terminal_app_t *app) {
+    if (app->rq_head == app->rq_tail) return -1;
+    uint8_t c = app->rq[app->rq_head % sizeof app->rq];
+    app->rq_head++;
+    return c;
+}
+
 static int tokenize(char *line, char *argv[], int max_args) {
     int argc = 0;
     char *p = line;
@@ -263,6 +275,8 @@ void terminal_app_init_colors(terminal_app_t *app, const gui_window_t *win,
     app->edit_total = 0;
     app->busy = 0;
     app->cancel = 0;
+    app->raw = 0;
+    app->rq_head = app->rq_tail = 0;
 
     ramfs_mkdir(TERM_HOME_DIR);
     str_copy(app->cwd, TERM_HOME_DIR, sizeof(app->cwd));
@@ -274,7 +288,12 @@ void terminal_app_init_colors(terminal_app_t *app, const gui_window_t *win,
 void terminal_app_handle_char(terminal_app_t *app, char c) {
     /* Идёт команда: ввод не принимаем, только Ctrl+C (код 3) её прерывает. */
     if (app->busy) {
-        if (c == 3) app->cancel = 1;
+        if (app->raw) {
+            if (app->rq_tail - app->rq_head < sizeof app->rq)
+                app->rq[app->rq_tail++ % sizeof app->rq] = (uint8_t)c;
+        } else if (c == 3) {
+            app->cancel = 1;
+        }
         return;
     }
 

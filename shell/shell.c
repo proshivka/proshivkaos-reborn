@@ -17,6 +17,7 @@
 #include "dns.h"
 #include "tcp.h"
 #include "lineedit.h"
+#include "shell_netcmd.h"
 
 #define CMD_BUF_SIZE   128
 #define CMD_MAX_ARGS   16
@@ -425,6 +426,7 @@ static void cmd_help(void) {
         "  udpsend <ip> <p> <text> - otpravit UDP\n"
         "  nslookup <name>    - uznat IP po imeni (DNS)\n"
         "  http <host> [path] - HTTP GET po portu 80\n"
+        "  ssh [-p port] user@host [cmd] - SSH\n"
     );
 }
 
@@ -439,7 +441,7 @@ static void print_prompt(void) {
 static const char *const COMMANDS[] = {
     "ls", "cat", "touch", "edit", "neofetch", "help",
     "clear", "echo",
-    "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http",
+    "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
 };
 
 /* ---------------- Главный цикл ---------------- */
@@ -479,6 +481,7 @@ void shell_run(void) {
         else if (str_eq(argv[0], "udpsend")) cmd_udpsend(argc, argv);
         else if (str_eq(argv[0], "nslookup")) cmd_nslookup(argc, argv);
         else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
+        else if (shell_try_netcmd(argc, argv)) {}
         else {
             hal_console_write("neizvestnaya komanda: ");
             hal_console_write(argv[0]);
