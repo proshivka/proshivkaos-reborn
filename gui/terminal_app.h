@@ -28,6 +28,12 @@ typedef struct terminal_app {
      * клавиши не попадают в строку ввода, кроме Ctrl+C — он ставит cancel. */
     int busy;
     int cancel;
+
+    /* «Сырой» режим: пока busy, клавиши (в т.ч. Ctrl+C) складываются в очередь
+     * и читаются командой через terminal_app_raw_getc(). Нужен для ssh. */
+    int raw;
+    uint8_t rq[64];
+    unsigned rq_head, rq_tail;
 } terminal_app_t;
 
 void terminal_app_init(terminal_app_t *app, const gui_window_t *win);
@@ -50,5 +56,9 @@ void terminal_app_set_ext_help(const char *text);   /* строка для ко�
 
 /* Пользователь нажал Ctrl+C, пока выполнялась команда. */
 int  terminal_app_cancel_requested(const terminal_app_t *app);
+
+/* Сырой ввод: включить/выключить и забрать клавишу (-1 — очередь пуста). */
+void terminal_app_set_raw(terminal_app_t *app, int on);
+int  terminal_app_raw_getc(terminal_app_t *app);
 
 #endif

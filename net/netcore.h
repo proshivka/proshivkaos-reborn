@@ -21,7 +21,8 @@
  * работает как раньше. */
 typedef int (*net_pump_fn)(void);
 void net_set_pump(net_pump_fn fn);
-void net_pump(void);               /* зовётся из циклов ожидания */
+void net_pump(void);               /* зовётся из циклов ожидания (раз в ~2000 вызовов) */
+void net_yield(void);              /* то же, но сразу: для ожидания ввода пользователя */
 int  net_aborted(void);
 void net_abort_clear(void);        /* вызывать перед каждой новой командой */
 

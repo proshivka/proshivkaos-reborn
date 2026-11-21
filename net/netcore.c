@@ -41,6 +41,10 @@ void net_abort_clear(void)        { abort_flag = 0; }
 /* Опрос карты — это порт ввода-вывода, на эмуляторе он не мгновенный;
  * раз в 2048 вызовов (порядка сотых долей секунды) отдаём управление
  * интерфейсу. */
+void net_yield(void) {
+    if (pump_fn && pump_fn()) abort_flag = 1;
+}
+
 void net_pump(void) {
     if (!pump_fn) return;
     if (++pump_ctr & 0x7FFu) return;
