@@ -100,6 +100,7 @@ static int create_entry(const char *path, int is_dir) {
     e->is_dir = is_dir;
     e->size = 0;
     e->used = 1;
+    ramfs_persist_save(g_entries, (size_t)(e - g_entries));
     return 0;
 }
 
@@ -107,9 +108,24 @@ void ramfs_init(void) {
     for (size_t i = 0; i < RAMFS_MAX_ENTRIES; i++)
         g_entries[i].used = 0;
 
+    /* Если есть диск — поднимаем дерево с него. Имя (последний сегмент)
+       на диске не хранится, его вычисляем из пути. */
+    int loaded = ramfs_persist_attach(g_entries, RAMFS_MAX_ENTRIES);
+    if (loaded) {
+        for (size_t i = 0; i < RAMFS_MAX_ENTRIES; i++)
+            if (g_entries[i].used)
+                extract_name(g_entries[i].path, g_entries[i].name, sizeof(g_entries[i].name));
+    }
+
+    /* Корень обязан быть всегда; на повреждённом диске его могло не быть. */
     create_entry("/", 1);
-    create_entry("/welcome.txt", 0);
-    ramfs_write("/welcome.txt", "proshivkaOS NEXT RamFS rabotaet.\n", 34);
+
+    /* Приветственный файл — только на пустой системе (первый запуск или
+       нет диска), чтобы не воскрешать то, что пользователь изменил. */
+    if (!loaded) {
+        create_entry("/welcome.txt", 0);
+        ramfs_write("/welcome.txt", "proshivkaOS NEXT RamFS rabotaet.\n", 34);
+    }
 }
 
 int ramfs_touch(const char *path) { return create_entry(path, 0); }
@@ -125,6 +141,7 @@ int ramfs_write(const char *path, const char *data, size_t len) {
     if (len > RAMFS_MAX_FILE_SIZE) len = RAMFS_MAX_FILE_SIZE;
     for (size_t i = 0; i < len; i++) e->data[i] = (uint8_t)data[i];
     e->size = len;
+    ramfs_persist_save(g_entries, (size_t)(e - g_entries));
     return 0;
 }
 

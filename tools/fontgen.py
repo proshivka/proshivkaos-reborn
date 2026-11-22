@@ -24,8 +24,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONTS = os.path.join(ROOT, "third_party", "fonts")
 
 SCALES = range(1, 9)
-CHARS = [c for c in range(0x20, 0x7F)] + [0xB0, 0x2022, 0x2190, 0x2192] + \
-        [0x401] + list(range(0x410, 0x450)) + [0x451]
+# Таблица глифов ОБЯЗАНА быть отсортирована по коду: gui/font.c ищет в ней
+# бинарным поиском. В несортированной кириллица не находилась вовсе.
+CHARS = sorted([c for c in range(0x20, 0x7F)] + [0xB0, 0x2022, 0x2190, 0x2192] +
+               [0x401] + list(range(0x410, 0x450)) + [0x451])
 
 
 def load(path, px, weight):

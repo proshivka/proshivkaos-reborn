@@ -3,10 +3,12 @@
 #include "touch_theme.h"
 #include "hal_input.h"
 
-/* Служебные коды клавиш. Обычные клавиши несут свой ASCII, эти три —
- * значения вне ASCII, чтобы не столкнуться с печатными символами. */
+/* Служебные коды клавиш. Обычные клавиши несут свой ASCII, русские — код
+ * Юникода (U+0410 и выше), эти три — значения между ними, так что с
+ * печатными символами они не сталкиваются. */
 #define K_LAYER  0x101   /* переключить раскладку букв/цифр */
 #define K_HIDE   0x102   /* убрать клавиатуру                */
+#define K_LANG   0x103   /* переключить язык букв EN/RU      */
 
 #define MAX_ROWS  4
 #define MAX_KEYS 12
@@ -32,8 +34,20 @@ static const osk_row_t g_letters[MAX_ROWS] = {
       {"H",'h',1},{"J",'j',1},{"K",'k',1},{"L",'l',1}}, 9},
     {{{"Z",'z',1},{"X",'x',1},{"C",'c',1},{"V",'v',1},{"B",'b',1},
       {"N",'n',1},{"M",'m',1},{"-",'-',1},{"<-",'\b',2}}, 9},
-    {{{"123",K_LAYER,2},{"/",'/',1},{".",'.',1},
-      {" ",' ',5},{"ENT",'\n',2},{"V",K_HIDE,1}}, 6}
+    {{{"123",K_LAYER,2},{"RU",K_LANG,1},{"/",'/',1},{".",'.',1},
+      {" ",' ',4},{"ENT",'\n',2},{"V",K_HIDE,1}}, 7}
+};
+
+/* Русская раскладка. Клавиша отдаёт СТРОЧНУЮ букву: подпись заглавная
+ * (как у латиницы), а в текст идёт то, что в нём и нужно. Код — номер
+ * символа в Юникоде, приложение получает его как обычное int-значение. */
+static const osk_row_t g_russian[MAX_ROWS] = {
+    {{{"Й",0x439,1},{"Ц",0x446,1},{"У",0x443,1},{"К",0x43A,1},{"Е",0x435,1},{"Н",0x43D,1},{"Г",0x433,1},{"Ш",0x448,1},{"Щ",0x449,1},{"З",0x437,1},{"Х",0x445,1},{"Ъ",0x44A,1}}, 12},
+    {{{"Ф",0x444,1},{"Ы",0x44B,1},{"В",0x432,1},{"А",0x430,1},{"П",0x43F,1},{"Р",0x440,1},{"О",0x43E,1},{"Л",0x43B,1},{"Д",0x434,1},{"Ж",0x436,1},{"Э",0x44D,1}}, 11},
+    {{{"Я",0x44F,1},{"Ч",0x447,1},{"С",0x441,1},{"М",0x43C,1},{"И",0x438,1},{"Т",0x442,1},{"Ь",0x44C,1},{"Б",0x431,1},{"Ю",0x44E,1},
+      {"<-",'\b',2}}, 10},
+    {{{"123",K_LAYER,2},{"EN",K_LANG,1},{"Ё",0x451,1},{".",'.',1},
+      {" ",' ',3},{"ENT",'\n',2},{"V",K_HIDE,1}}, 7}
 };
 
 /* Цифры и символы — всё, что нужно для командной строки: пути, флаги,
@@ -49,7 +63,13 @@ static const osk_row_t g_symbols[MAX_ROWS] = {
       {" ",' ',5},{"ENT",'\n',2},{"V",K_HIDE,1}}, 6}
 };
 
-static int g_layer   = 0;   /* 0 — буквы, 1 — символы */
+#define LAYER_EN      0   /* латиница       */
+#define LAYER_SYMBOLS 1   /* цифры, символы */
+#define LAYER_RU      2   /* кириллица      */
+
+static int g_layer   = LAYER_EN;
+static int g_lang    = LAYER_EN;   /* какие буквы показывать, когда выходим
+                                      из слоя символов: EN или RU */
 static int g_visible = 0;
 
 static int g_x, g_y, g_w, g_h;
@@ -59,11 +79,14 @@ static int g_key_h, g_row_gap;
 static int g_pressed = -1;
 
 static const osk_row_t *current_rows(void) {
-    return g_layer ? g_symbols : g_letters;
+    if (g_layer == LAYER_SYMBOLS) return g_symbols;
+    if (g_layer == LAYER_RU)      return g_russian;
+    return g_letters;
 }
 
 void osk_init(void) {
-    g_layer = 0;
+    g_layer = LAYER_EN;
+    g_lang = LAYER_EN;
     g_visible = 0;
     g_pressed = -1;
 }
@@ -138,7 +161,7 @@ void osk_render(void) {
                 top = GFX_UI_KEY_DOWN; bot = GFX_UI_KEY;
             } else if (code == '\n') {
                 top = GFX_UI_ACCENT;   bot = GFX_UI_ACCENT_DARK;
-            } else if (code == K_LAYER || code == K_HIDE || code == '\b') {
+            } else if (code == K_LAYER || code == K_LANG || code == K_HIDE || code == '\b') {
                 top = GFX_UI_SURFACE_2; bot = GFX_UI_SURFACE;
             } else {
                 top = GFX_UI_KEY;      bot = GFX_UI_SURFACE;
@@ -147,7 +170,7 @@ void osk_render(void) {
             hal_gfx_draw_glossy_button(x, y, w, h, top, bot, GFX_UI_DIVIDER, TM.radius);
 
             const char *label = rows[row].keys[i].label;
-            int ls = (code == K_LAYER || code == K_HIDE) ? TM.scale_small : TM.scale;
+            int ls = (code == K_LAYER || code == K_LANG || code == K_HIDE) ? TM.scale_small : TM.scale;
             int ty = y + (h - FONT_H * ls) / 2;
             hal_gfx_draw_string_centered(x, ty, w, label, GFX_UI_TEXT, ls);
         }
@@ -207,7 +230,15 @@ int osk_handle_pointer(int type, int x, int y) {
 
         int code = current_rows()[row].keys[idx].code;
 
-        if (code == K_LAYER) { g_layer = !g_layer; return 0; }
+        if (code == K_LAYER) {
+            g_layer = (g_layer == LAYER_SYMBOLS) ? g_lang : LAYER_SYMBOLS;
+            return 0;
+        }
+        if (code == K_LANG) {
+            g_lang = (g_lang == LAYER_EN) ? LAYER_RU : LAYER_EN;
+            g_layer = g_lang;
+            return 0;
+        }
         if (code == K_HIDE)  { g_visible = 0;      return 0; }
         return code;
     }

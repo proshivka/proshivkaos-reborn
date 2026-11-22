@@ -41,6 +41,7 @@ void gui_draw_cursor(int x, int y);   /* gui/cursor.c */
 static const touch_app_t *const g_apps[] = {
     &app_terminal,
     &app_files,
+    &app_edit,
     &app_settings,
     &app_wifi,
     &app_about

@@ -49,11 +49,81 @@ static int tokenize(char *line, char *argv[], int max_args) {
     return argc;
 }
 
+/* ---------------- Текущая папка ---------------- */
+
+/* Текущая папка оболочки. Все команды с путями разбирают аргумент через
+ * path_resolve(), так что относительные имена работают от неё. Домашняя
+ * папка ("~") — корень, как и в оконном терминале. */
+static char g_cwd[RAMFS_MAX_PATH_LEN] = "/";
+
+/* Превращает аргумент-путь в канонический абсолютный: относительное имя
+ * приклеивается к g_cwd, "." и пустые сегменты выбрасываются, ".." снимает
+ * последний сегмент (выше корня не уйти). Слишком длинный путь молча
+ * обрезается — RamFS всё равно отвергнет такой. max должен быть >= 2. */
+static void path_resolve(const char *arg, char *out, size_t max) {
+    char full[2 * RAMFS_MAX_PATH_LEN];
+    size_t n = 0;
+
+    const char *a = arg;
+    if (a[0] == '~' && (a[1] == '\0' || a[1] == '/')) {
+        a++;
+        full[n++] = '/';
+    } else if (a[0] != '/') {
+        for (size_t i = 0; g_cwd[i] && n < sizeof(full) - 2; i++) full[n++] = g_cwd[i];
+        full[n++] = '/';
+    }
+    for (size_t i = 0; a[i] && n < sizeof(full) - 1; i++) full[n++] = a[i];
+    full[n] = '\0';
+
+    size_t len = 1;
+    out[0] = '/';
+    out[1] = '\0';
+
+    size_t i = 0;
+    while (full[i]) {
+        while (full[i] == '/') i++;
+        size_t start = i;
+        while (full[i] && full[i] != '/') i++;
+        size_t sl = i - start;
+        if (sl == 0) break;
+
+        if (sl == 1 && full[start] == '.') continue;
+        if (sl == 2 && full[start] == '.' && full[start + 1] == '.') {
+            while (len > 1 && out[len - 1] != '/') len--;   /* снять сегмент */
+            if (len > 1) len--;                             /* и слэш перед ним */
+            out[len] = '\0';
+            continue;
+        }
+
+        size_t need = len + (len > 1 ? 1 : 0) + sl;
+        if (need >= max) break;
+        if (len > 1) out[len++] = '/';
+        for (size_t k = 0; k < sl; k++) out[len++] = full[start + k];
+        out[len] = '\0';
+    }
+}
+
 /* ---------------- Команды ---------------- */
 
-static void cmd_ls(void) {
+static void cmd_ls(int argc, char *argv[]) {
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(argc > 1 ? argv[1] : ".", path, sizeof(path));
+
+    if (!ramfs_is_dir(path)) {
+        const ramfs_file_t *f = ramfs_lookup(path);
+        if (!f) {
+            hal_console_write("ls: net takogo fayla ili papki: ");
+            hal_console_write(argc > 1 ? argv[1] : path);
+            hal_console_putc('\n');
+            return;
+        }
+        hal_console_write(f->name);       /* ls <file> — просто его имя */
+        hal_console_putc('\n');
+        return;
+    }
+
     const ramfs_file_t *files[RAMFS_MAX_FILES];
-    size_t n = ramfs_list(files, RAMFS_MAX_FILES);
+    size_t n = ramfs_list_dir(path, files, RAMFS_MAX_FILES);
 
     if (n == 0) {
         hal_console_write("(pusto)\n");
@@ -61,11 +131,34 @@ static void cmd_ls(void) {
     }
 
     for (size_t i = 0; i < n; i++) {
-        hal_console_set_color(HAL_COLOR_LIGHT_GREEN, HAL_COLOR_BLACK);
-        hal_console_write(files[i]->name);
+        if (files[i]->is_dir) {
+            hal_console_set_color(HAL_COLOR_LIGHT_CYAN, HAL_COLOR_BLACK);
+            hal_console_write(files[i]->name);
+            hal_console_putc('/');
+        } else {
+            hal_console_set_color(HAL_COLOR_LIGHT_GREEN, HAL_COLOR_BLACK);
+            hal_console_write(files[i]->name);
+        }
         hal_console_reset_color();
         hal_console_putc('\n');
     }
+}
+
+static void cmd_cd(int argc, char *argv[]) {
+    const char *arg = (argc > 1) ? argv[1] : "~";    /* голый cd — домой */
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(arg, path, sizeof(path));
+
+    if (ramfs_is_dir(path)) {
+        size_t i = 0;
+        while (path[i] && i < sizeof(g_cwd) - 1) { g_cwd[i] = path[i]; i++; }
+        g_cwd[i] = '\0';
+        return;
+    }
+
+    hal_console_write("cd: ");
+    hal_console_write(arg);
+    hal_console_write(ramfs_lookup(path) ? ": eto ne papka\n" : ": net takoy papki\n");
 }
 
 static void cmd_cat(int argc, char *argv[]) {
@@ -74,7 +167,10 @@ static void cmd_cat(int argc, char *argv[]) {
         return;
     }
 
-    const ramfs_file_t *f = ramfs_lookup(argv[1]);
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(argv[1], path, sizeof(path));
+
+    const ramfs_file_t *f = ramfs_lookup(path);
     if (!f) {
         hal_console_write("cat: fayl ne nayden: ");
         hal_console_write(argv[1]);
@@ -94,29 +190,101 @@ static void cmd_touch(int argc, char *argv[]) {
         return;
     }
 
-    if (ramfs_touch(argv[1]) != 0)
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(argv[1], path, sizeof(path));
+
+    if (ramfs_touch(path) != 0)
         hal_console_write("touch: ne udalos sozdat fayl\n");
 }
 
-static void cmd_neofetch(void) {
-    hal_console_set_color(HAL_COLOR_LIGHT_CYAN, HAL_COLOR_BLACK);
-    hal_console_write(
-        "        /\\      \n"
-        "       /  \\     \n"
-        "      / /\\ \\    \n"
-        "     / ____ \\   \n"
-        "    /_/    \\_\\  \n"
-    );
-    hal_console_reset_color();
+/* neofetch: логотип слева, сведения справа. Консоль у нас построчная, без
+ * позиционирования курсора на всех платформах, поэтому экран собирается
+ * построчно: строка логотипа (дополненная пробелами до одной ширины) и
+ * следом строка сведений. */
+#define LOGO_W 20
 
-    hal_console_set_color(HAL_COLOR_YELLOW, HAL_COLOR_BLACK);
-    hal_console_write("proshivkaOS NEXT\n");
+static const char *const NF_LOGO[] = {
+    "         /\\         ",
+    "        /  \\        ",
+    "       / /\\ \\       ",
+    "      / /  \\ \\      ",
+    "     / /____\\ \\     ",
+    "    /_/      \\_\\    ",
+};
+#define NF_LOGO_LINES ((int)(sizeof NF_LOGO / sizeof NF_LOGO[0]))
+
+/* Одна строка сведений: подпись жёлтым-голубым, значение обычным цветом. */
+static void nf_info(int row) {
+    switch (row) {
+    case 0:
+        hal_console_set_color(HAL_COLOR_YELLOW, HAL_COLOR_BLACK);
+        hal_console_write("proshivkaOS NEXT ");
+        hal_console_write(PROSHIVKAOS_VERSION);
+        hal_console_reset_color();
+        return;
+    case 1:
+        hal_console_write("-----------------------");
+        return;
+    }
+
+    const char *label = 0, *value = 0;
+    switch (row) {
+    case 2: label = "kernel"; value = "microkernel, etap 1";    break;
+    case 3: label = "hal   "; value = "console/mem/thread(stub)"; break;
+    case 4: label = "fs    "; value = 0;                        break;
+    case 5: label = "arch  "; value = hal_arch_name();          break;
+    case 6: label = "cpu   "; value = hal_cpu_name();           break;
+    default: return;
+    }
+
+    hal_console_set_color(HAL_COLOR_LIGHT_CYAN, HAL_COLOR_BLACK);
+    hal_console_write(label);
     hal_console_reset_color();
-    hal_console_write("-----------------\n");
-    hal_console_write("kernel : microkernel, etap 1\n");
-    hal_console_write("hal    : console/mem/thread(stub)\n");
-    hal_console_write("fs     : RamFS (in-memory)\n");
-    hal_console_write("arch   : x86 (multiboot)\n");
+    hal_console_write(" : ");
+    if (row == 4) {
+        hal_console_write("RamFS + ");
+        hal_console_write(ramfs_persist_state_name());
+    } else {
+        hal_console_write(value);
+    }
+}
+
+static void cmd_neofetch(void) {
+    const int rows = 7;     /* строк сведений; логотип короче — добивается пробелами */
+
+    for (int r = 0; r < rows || r < NF_LOGO_LINES; r++) {
+        if (r < NF_LOGO_LINES) {
+            hal_console_set_color(HAL_COLOR_LIGHT_CYAN, HAL_COLOR_BLACK);
+            hal_console_write(NF_LOGO[r]);
+            hal_console_reset_color();
+        } else {
+            for (int k = 0; k < LOGO_W; k++) hal_console_putc(' ');
+        }
+        if (r < rows) nf_info(r);
+        hal_console_putc('\n');
+    }
+}
+
+static void print_uint(unsigned v) {
+    char buf[12]; int n = 0;
+    do { buf[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+    char out[12]; int k = 0;
+    while (n) out[k++] = buf[--n];
+    out[k] = 0;
+    hal_console_write(out);
+}
+
+/* Состояние постоянного хранилища: подключился ли диск и сколько операций
+ * с ним не удалось. Первое, что стоит посмотреть, если файлы пропадают. */
+static void cmd_fsinfo(void) {
+    hal_console_write("fs     : RamFS + ");
+    hal_console_write(ramfs_persist_state_name());
+    hal_console_write("\n");
+    if (ramfs_persist_errors()) {
+        hal_console_write("oshibok diska: ");
+        print_uint(ramfs_persist_errors());
+        hal_console_write("\n");
+    }
 }
 
 static void cmd_clear(void) {
@@ -403,14 +571,18 @@ static void cmd_edit(int argc, char *argv[]) {
         return;
     }
 
-    ramfs_touch(argv[1]);
-    editor_run(argv[1]);
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(argv[1], path, sizeof(path));
+
+    ramfs_touch(path);
+    editor_run(path);
 }
 
 static void cmd_help(void) {
     hal_console_write(
         "Dostupnye komandy:\n"
-        "  ls                 - spisok faylov\n"
+        "  ls [papka]         - spisok faylov\n"
+        "  cd [papka]         - smenit papku (cd .., cd ~, cd /)\n"
         "  cat <file>         - pokazat soderzhimoe fayla\n"
         "  touch <file>       - sozdat pustoy fayl\n"
         "  clear              - ochistit konsol\n"
@@ -418,6 +590,7 @@ static void cmd_help(void) {
         "  edit <file>        - polnoekrannyy redaktor\n"
         "                       (^S sohranit, ^Q vyhod, ^F poisk)\n"
         "  neofetch           - info o sisteme\n"
+        "  fsinfo             - sostoyanie diska (sohranenie faylov)\n"
         "  help               - eta spravka\n"
         "  ifconfig           - MAC setevoy karty\n"
         "  arping             - proverka seti (ARP k 10.0.2.2)\n"
@@ -432,14 +605,20 @@ static void cmd_help(void) {
 
 static void print_prompt(void) {
     hal_console_set_color(HAL_COLOR_LIGHT_MAGENTA, HAL_COLOR_BLACK);
-    hal_console_write("proshivkaos> ");
+    if (g_cwd[0] == '/' && g_cwd[1] == '\0') {
+        hal_console_write("proshivkaos> ");
+    } else {
+        hal_console_write("proshivkaos ");
+        hal_console_write(g_cwd);
+        hal_console_write("> ");
+    }
     hal_console_reset_color();
 }
 
 /* Имена команд для Tab. ДЕРЖАТЬ В СИНХРОНЕ с цепочкой else-if в shell_run():
  * добавил команду — добавь её имя сюда. */
 static const char *const COMMANDS[] = {
-    "ls", "cat", "touch", "edit", "neofetch", "help",
+    "ls", "cd", "cat", "touch", "edit", "neofetch", "fsinfo", "help",
     "clear", "echo",
     "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
 };
@@ -466,11 +645,13 @@ void shell_run(void) {
         if (argc == 0)
             continue;
 
-        if (str_eq(argv[0], "ls"))            cmd_ls();
+        if (str_eq(argv[0], "ls"))            cmd_ls(argc, argv);
+        else if (str_eq(argv[0], "cd"))       cmd_cd(argc, argv);
         else if (str_eq(argv[0], "cat"))      cmd_cat(argc, argv);
         else if (str_eq(argv[0], "touch"))    cmd_touch(argc, argv);
         else if (str_eq(argv[0], "edit"))     cmd_edit(argc, argv);
         else if (str_eq(argv[0], "neofetch")) cmd_neofetch();
+        else if (str_eq(argv[0], "fsinfo"))   cmd_fsinfo();
         else if (str_eq(argv[0], "ifconfig")) cmd_ifconfig();
         else if (str_eq(argv[0], "arping"))   cmd_arping();
         else if (str_eq(argv[0], "help"))     cmd_help();

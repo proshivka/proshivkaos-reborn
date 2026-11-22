@@ -544,6 +544,22 @@ void hal_gfx_draw_char_scaled(int x, int y, char c, uint8_t fg, uint8_t bg, int 
     }
 }
 
+/* Один символ по коду Юникода — клетка моноширинной сетки, как у
+ * hal_gfx_draw_char_scaled(), но не ограниченная байтом: так рисуется
+ * кириллица. Без сглаженного шрифта (масштаб 1) есть только ASCII, всё
+ * остальное рисуется знаком "?". Символа нет в шрифте — тоже "?". */
+void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale) {
+    if (cp < 0x80) { hal_gfx_draw_char_scaled(x, y, (char)cp, fg, bg, scale); return; }
+
+    if (scale < 1) scale = 1;
+    int s = aa_scale(scale);
+    if (!s) { hal_gfx_draw_char_scaled(x, y, '?', fg, bg, scale); return; }
+
+    int cw = font_mono_advance(scale);
+    gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
+    font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw, cp, hal_gfx_palette_rgb(fg));
+}
+
 void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int scale) {
     if (scale < 1) scale = 1;
     int as = aa_scale(scale);

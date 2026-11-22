@@ -245,11 +245,20 @@ static void run_command(terminal_app_t *app, char *line) {
         gconsole_write(&app->console, hal_arch_name());
         gconsole_write(&app->console, "\nCPU : ");
         gconsole_write(&app->console, hal_cpu_name());
-        gconsole_write(&app->console, "\nFS  : RAMFS");
+        gconsole_write(&app->console, "\nFS  : RAMFS + ");
+        gconsole_write(&app->console, ramfs_persist_state_name());
+
+    } else if (str_eq(argv[0], "fsinfo")) {
+        gconsole_write(&app->console, "\nRAMFS + ");
+        gconsole_write(&app->console, ramfs_persist_state_name());
+        if (ramfs_persist_errors()) {
+            gconsole_write(&app->console, "\nerrors: ");
+            write_padded(&app->console, ramfs_persist_errors(), 1);
+        }
 
     } else if (str_eq(argv[0], "help")) {
         gconsole_write(&app->console, "\nLS CD PWD MKDIR CAT TOUCH EDIT");
-        gconsole_write(&app->console, "\nCLEAR DATE UPTIME NEOFETCH HELP");
+        gconsole_write(&app->console, "\nCLEAR DATE UPTIME NEOFETCH FSINFO HELP");
         if (ext_help) {
             gconsole_putc(&app->console, '\n');
             gconsole_write(&app->console, ext_help);

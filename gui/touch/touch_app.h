@@ -55,6 +55,7 @@ typedef struct {
 extern const touch_app_t app_terminal;
 extern const touch_app_t app_settings;
 extern const touch_app_t app_files;
+extern const touch_app_t app_edit;
 extern const touch_app_t app_about;
 extern const touch_app_t app_wifi;
 
@@ -77,6 +78,10 @@ void touch_ui_go_home(void);
  * "Настройки -> О системе", как на настоящем телефоне. Имя сравнивается с
  * полем name из touch_app_t; неизвестное имя просто игнорируется. */
 void touch_ui_open(const char *app_name);
+
+/* Открыть файл в редакторе (gui/touch/app_edit.c). from_files = 1 —
+ * стрелка назад вернёт в файловый менеджер, иначе на домашний экран. */
+void app_edit_open(const char *path, int from_files);
 
 /* Показать или спрятать экранную клавиатуру во время работы приложения. */
 void touch_ui_keyboard(int on);

@@ -142,8 +142,8 @@ endif
 # Верхняя граница — GFXFB_MAX_PIXELS (720x1440), см. gui/gfxfb.h.
 # Игнорируется, если BOARD задаёт готовый фреймбуфер загрузчика (mido) —
 # там разрешение диктует само железо, см. arch/arm64/boards/mido.h.
-SCREEN_W ?= 480
-SCREEN_H ?= 960
+SCREEN_W ?= 400
+SCREEN_H ?= 800
 
 # Конкретная плата (имеет смысл только для ARCH=arm64). По умолчанию —
 # эмулятор (arch/arm64/boards/qemu.h). BOARD=mido подключает
@@ -200,7 +200,9 @@ CORE_SOURCES := \
     kernel/kstring.c \
     hal/hal_mem.c \
     hal/hal_thread.c \
-    fs/ramfs.c
+    hal/hal_blk_stub.c \
+    fs/ramfs.c \
+    fs/ramfs_persist.c
 
 # --- Графика, общая для всех платформ --------------------------------------
 GFX_COMMON_SOURCES := \
@@ -226,6 +228,7 @@ ifeq ($(ARCH),x86)
       arch/x86/cpu.c \
       arch/x86/rtc.c \
       arch/x86/pit.c \
+      arch/x86/ata_pio.c \
       hal/hal_time_x86.c
 
   # Текстовый профиль
@@ -233,6 +236,7 @@ ifeq ($(ARCH),x86)
       kernel/kernel.c kernel/panic.c \
       hal/hal_console.c \
       arch/x86/vga.c arch/x86/keyboard.c arch/x86/cpu.c \
+      arch/x86/ata_pio.c \
       arch/x86/pci.c arch/x86/net_rtl8139.c arch/x86/entropy.c \
       net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \
       net/netcmd.c net/ssh/sha2.c net/ssh/ed25519.c net/ssh/chachapoly.c net/ssh/ssh.c \
@@ -257,6 +261,7 @@ else
       arch/arm64/uart.c \
       arch/arm64/uart_pl011.c \
       arch/arm64/uart_msm.c \
+      arch/arm64/virtio_blk.c \
       arch/arm64/mmu.c \
       arch/arm64/timer.c \
       arch/arm64/smp.c
@@ -353,6 +358,7 @@ TOUCH_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     gui/touch/app_terminal.c \
     gui/touch/app_settings.c \
     gui/touch/app_files.c \
+    gui/touch/app_edit.c \
     gui/touch/app_about.c \
     gui/touch/app_wifi.c \
     gui/touch/touch_ui.c
@@ -408,7 +414,7 @@ BOOT_IMG_RAW:= $(BUILD)/proshivkaos_boot_uncompressed.img
 BOOT_IMG_SWAP:= $(BUILD)/proshivkaos_boot_swap.img
 ISO         := $(BUILD)/proshivkaos.iso
 
-.PHONY: all text gui touch clean run gui-run touch-run iso image bootimg help mido
+.PHONY: all text gui touch clean run gui-run touch-run iso image bootimg help mido disk disk-reset test-fs
 
 all: text
 
@@ -624,29 +630,53 @@ bootimg-raw: $(PACKED_RAW)
 # ============================================================================
 #  Запуск в QEMU
 # ============================================================================
+# Диск для постоянного хранения (RamFS переживает перезагрузку). Это
+# обычный файл-образ: QEMU отдаёт его системе как диск — на ARM64 через
+# virtio-blk, на x86 как IDE. Формат образа на обеих архитектурах один и
+# тот же, так что образ можно переносить между ними.
+#   make disk              создать пустой образ (если ещё нет)
+#   make disk-reset        стереть и создать заново
+#   make run DISK=         без диска (всё в ОЗУ, как раньше)
+# Образ чистый (нулевой) — система сама отформатирует его при первом старте.
+# Лежит рядом со сборкой, а не в build/, чтобы "make clean" не стирал данные.
+DISK      ?= disk.img
+DISK_SIZE_KB ?= 4096
+# Запятые внутри $(if ...) разделили бы его аргументы — отсюда $(comma).
+comma := ,
+
+disk:
+	@test -f "$(DISK)" || { dd if=/dev/zero of="$(DISK)" bs=1024 count=$(DISK_SIZE_KB) 2>/dev/null && echo "создан образ диска: $(DISK) ($(DISK_SIZE_KB) КиБ)"; }
+
+disk-reset:
+	rm -f "$(DISK)"
+	@$(MAKE) --no-print-directory disk DISK="$(DISK)" DISK_SIZE_KB=$(DISK_SIZE_KB)
+
 ifeq ($(ARCH),x86)
+
+# Диск как IDE: первый -drive if=ide становится master первичного канала.
+DISK_ARGS = $(if $(DISK),-drive file=$(DISK)$(comma)format=raw$(comma)if=ide)
 
 # Сетевая карта RTL8139 в user-режиме QEMU (NAT): шлюз 10.0.2.2, наш адрес
 # 10.0.2.15. Отключить: make run NET=
 NET ?= -netdev user,id=n0 -device rtl8139,netdev=n0
 
-run: $(KERNEL_ELF)
-	$(QEMU) -kernel $(KERNEL_ELF) $(NET)
+run: $(KERNEL_ELF) $(if $(DISK),disk)
+	$(QEMU) -kernel $(KERNEL_ELF) $(DISK_ARGS) $(NET)
 
-run-big: $(KERNEL_ELF)
-	$(QEMU) -kernel $(KERNEL_ELF) -display sdl $(NET)
+run-big: $(KERNEL_ELF) $(if $(DISK),disk)
+	$(QEMU) -kernel $(KERNEL_ELF) $(DISK_ARGS) -display sdl $(NET)
 
-gui-run: $(GUI_ELF)
-	$(QEMU) -kernel $(GUI_ELF) $(NET)
+gui-run: $(GUI_ELF) $(if $(DISK),disk)
+	$(QEMU) -kernel $(GUI_ELF) $(DISK_ARGS) $(NET)
 
-gui-run-big: $(GUI_ELF)
-	$(QEMU) -kernel $(GUI_ELF) -display sdl $(NET)
+gui-run-big: $(GUI_ELF) $(if $(DISK),disk)
+	$(QEMU) -kernel $(GUI_ELF) $(DISK_ARGS) -display sdl $(NET)
 
 # На x86 пальцем работает мышь: hal_input_x86.c переводит её относительные
 # смещения в те же события "нажали/ведут/отпустили", что приходят с
 # тачскрина на ARM64. Удобно для быстрой отладки интерфейса.
-touch-run: $(TOUCH_ELF)
-	$(QEMU) -kernel $(TOUCH_ELF) -display sdl
+touch-run: $(TOUCH_ELF) $(if $(DISK),disk)
+	$(QEMU) -kernel $(TOUCH_ELF) $(DISK_ARGS) -display sdl
 
 iso: $(KERNEL_ELF)
 	mkdir -p $(BUILD)/isodir/boot/grub
@@ -661,18 +691,21 @@ run-iso: iso
 
 else
 
+# Параметры диска (DISK, DISK_ARGS) — см. общий блок выше, в разделе "Запуск в QEMU".
+DISK_ARGS  = $(if $(DISK),-drive file=$(DISK)$(comma)if=none$(comma)format=raw$(comma)id=hd0 -device virtio-blk-device$(comma)drive=hd0)
+
 # Текстовый профиль: экрана нет вообще, вся жизнь в последовательном порту.
-run: $(KERNEL_ELF)
-	$(QEMU) -M virt -cpu cortex-a53 -m 256 -nographic -kernel $(KERNEL_ELF)
+run: $(KERNEL_ELF) $(if $(DISK),disk)
+	$(QEMU) -M virt -cpu cortex-a53 -m 256 -nographic -kernel $(KERNEL_ELF) $(DISK_ARGS)
 
 # Тач-профиль:
 #   -device ramfb                 экран (см. arch/arm64/ramfb.c)
 #   -device virtio-tablet-device  тачскрин: абсолютные координаты
 #   -device virtio-keyboard-device  клавиатура (экранная тоже есть, эта — для удобства)
 #   -serial mon:stdio             отладочный вывод ядра в терминал
-touch-run: $(TOUCH_ELF)
+touch-run: $(TOUCH_ELF) $(if $(DISK),disk)
 	$(QEMU) -M virt -cpu cortex-a53 -m 512 \
-	    -kernel $(TOUCH_ELF) \
+	    -kernel $(TOUCH_ELF) $(DISK_ARGS) \
 	    -device ramfb \
 	    -device virtio-tablet-device \
 	    -device virtio-keyboard-device \
@@ -680,15 +713,25 @@ touch-run: $(TOUCH_ELF)
 
 # То же самое, но из сырого Image — проверка, что образ для реального
 # железа собран правильно и грузится так же, как ELF.
-image-run: image
+image-run: image $(if $(DISK),disk)
 	$(QEMU) -M virt -cpu cortex-a53 -m 512 \
-	    -kernel $(RAW_IMAGE) \
+	    -kernel $(RAW_IMAGE) $(DISK_ARGS) \
 	    -device ramfb \
 	    -device virtio-tablet-device \
 	    -device virtio-keyboard-device \
 	    -serial mon:stdio
 
 endif
+
+# ============================================================================
+#  Проверка слоя сохранения на хосте (без QEMU и кросс-компилятора)
+# ============================================================================
+HOSTCC ?= cc
+test-fs:
+	@mkdir -p build
+	$(HOSTCC) -std=gnu11 -Wall -Wextra -O2 -Ihal -Ifs \
+	    tools/ramfs_persist_test.c fs/ramfs.c fs/ramfs_persist.c -o build/ramfs_persist_test
+	./build/ramfs_persist_test
 
 # ============================================================================
 clean:
@@ -705,6 +748,9 @@ help:
 	@echo "  make ARCH=arm64 image          сырой ARM64 Image для загрузчика"
 	@echo "  make ARCH=arm64 bootimg        Android boot.img для fastboot"
 	@echo "  make mido                      образ для Redmi Note 4/4X одной командой"
+	@echo "  make [ARCH=...] disk           создать образ диска disk.img (RamFS сохраняется на него)"
+	@echo "  make [ARCH=...] disk-reset     стереть образ диска и создать заново"
+	@echo "  make test-fs                   проверить сохранение RamFS на хосте"
 	@echo "  make clean                     удалить build/"
 	@echo ""
 	@echo "  Разрешение тач-сборки: make ARCH=arm64 touch SCREEN_W=720 SCREEN_H=1440"

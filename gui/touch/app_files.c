@@ -14,6 +14,7 @@
 #include "touch_theme.h"
 #include "hal_input.h"
 #include "ramfs.h"
+#include "utf8.h"
 
 #define MODE_LIST   0
 #define MODE_VIEWER 1
@@ -32,6 +33,7 @@ static int g_drag_start_y = 0;
 static int g_drag_start_scroll = 0;
 static int g_drag_distance = 0;
 static int g_pressed_row = -1;
+static int g_pressed_edit = 0;   /* кнопка EDIT в просмотрщике */
 
 static void str_copy(char *dst, const char *src, int max) {
     int i = 0;
@@ -95,6 +97,14 @@ static void header_rect(int *x, int *y, int *w, int *h) {
     *x = g_x; *y = g_y; *w = TM.touch; *h = TM.touch;
 }
 
+/* Кнопка EDIT справа в заголовке просмотрщика: открывает файл в редакторе. */
+static void edit_btn_rect(int *x, int *y, int *w, int *h) {
+    *w = TM.touch * 2;
+    *h = TM.touch - TM.pad;
+    *x = g_x + g_w - *w - TM.pad;
+    *y = g_y + (TM.touch - *h) / 2;
+}
+
 static int list_area_y(void) { return g_y + TM.touch; }
 static int list_area_h(void) { return g_h - TM.touch; }
 
@@ -153,6 +163,11 @@ static void render_viewer(void) {
     hal_gfx_fill_rect(g_x, g_y, g_w, g_h, GFX_UI_BG);
     draw_header(g_view_name);
 
+    int ex, ey, ew, eh;
+    edit_btn_rect(&ex, &ey, &ew, &eh);
+    touch_draw_button(ex, ey, ew, eh, "EDIT", g_pressed_edit,
+                       GFX_UI_SURFACE, GFX_UI_SURFACE_3);
+
     const ramfs_file_t *f = ramfs_lookup(g_view_name);
     int area_y = list_area_y() + TM.pad;
     int area_x = g_x + TM.pad * 2;
@@ -167,21 +182,27 @@ static void render_viewer(void) {
     }
 
     /* Перенос по ширине области, с учётом прокрутки по строкам. */
-    int cw = hal_gfx_cell_w(TM.scale_small);
-    int chx = FONT_H * TM.scale_small;
+    /* Основной масштаб, как в редакторе: при мелком (1 на узком экране)
+       кириллицы в шрифте нет. */
+    int cw = hal_gfx_cell_w(TM.scale);
+    int chx = FONT_H * TM.scale;
     int cols = (g_w - TM.pad * 4) / cw;
     if (cols < 1) return;
 
     int col = 0;
     int line = 0;
-    for (size_t i = 0; i < f->size; i++) {
-        char c = (char)f->data[i];
-        if (c == '\n') { col = 0; line++; continue; }
+    /* Файл — UTF-8: идём символами, а не байтами (кириллица). */
+    for (int i = 0; i < (int)f->size; ) {
+        uint32_t cp;
+        i += utf8_decode((const char *)f->data, (int)f->size, i, &cp);
+        if (cp == '\n') { col = 0; line++; continue; }
 
         int py = area_y + line * chx - g_scroll;
-        if (py >= list_area_y() && py + chx <= g_y + g_h)
-            hal_gfx_draw_char_scaled(area_x + col * cw, py, c,
-                                      GFX_UI_TEXT, GFX_UI_BG, TM.scale_small);
+        if (py >= list_area_y() && py + chx <= g_y + g_h) {
+            uint32_t shown = (cp < 32 || cp == 127 || cp == UTF8_BAD) ? ' ' : cp;
+            hal_gfx_draw_cp_scaled(area_x + col * cw, py, shown,
+                                    GFX_UI_TEXT, GFX_UI_BG, TM.scale);
+        }
         col++;
         if (col >= cols) { col = 0; line++; }
     }
@@ -215,6 +236,11 @@ static void files_on_touch(int type, int x, int y) {
         g_drag_start_scroll = g_scroll;
         g_drag_distance = 0;
         g_pressed_row = (g_mode == MODE_LIST) ? row_at(y) : -1;
+        {
+            int ex, ey, ew, eh;
+            edit_btn_rect(&ex, &ey, &ew, &eh);
+            g_pressed_edit = (g_mode == MODE_VIEWER) && touch_hit(x, y, ex, ey, ew, eh);
+        }
         return;
     }
 
@@ -226,6 +252,7 @@ static void files_on_touch(int type, int x, int y) {
         /* Как только палец уехал заметно — это прокрутка, а не нажатие. */
         if (g_drag_distance > TM.touch / 3) {
             g_pressed_row = -1;
+            g_pressed_edit = 0;
             g_scroll = g_drag_start_scroll - (y - g_drag_start_y);
 
             if (g_mode == MODE_LIST) {
@@ -242,10 +269,20 @@ static void files_on_touch(int type, int x, int y) {
     if (type != HAL_EV_POINTER_UP) return;
 
     int was_row = g_pressed_row;
+    int was_edit = g_pressed_edit;
     g_pressed_row = -1;
+    g_pressed_edit = 0;
 
     /* Тянули — значит прокручивали, ничего не открываем. */
     if (g_drag_distance > TM.touch / 3) return;
+
+    /* EDIT в просмотрщике */
+    if (was_edit) {
+        int ex, ey, ew, eh;
+        edit_btn_rect(&ex, &ey, &ew, &eh);
+        if (touch_hit(x, y, ex, ey, ew, eh)) app_edit_open(g_view_name, 1);
+        return;
+    }
 
     /* Кнопка "наверх" в заголовке */
     if (touch_hit(x, y, hx, hy, hw, hh)) {
