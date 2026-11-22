@@ -27,7 +27,7 @@ typedef struct {
     int used;
 } ramfs_file_t;
 
-void ramfs_init(void);   /* создаёт "/" и домашний каталог "/root" + welcome.txt */
+void ramfs_init(void);   /* создаёт "/" и welcome.txt (если дерево не загружено с диска) */
 
 /* Пути без ведущего "/" трактуются как находящиеся в корне "/" —
  * для реальной работы с текущим каталогом резолвьте путь на стороне
@@ -40,5 +40,28 @@ int  ramfs_is_dir(const char *path);                         /* 1, если пу
 
 size_t ramfs_list(const ramfs_file_t **out, size_t max);              /* содержимое "/" — для обратной совместимости */
 size_t ramfs_list_dir(const char *dir_path, const ramfs_file_t **out, size_t max);
+
+/* ---- Постоянное хранение (fs/ramfs_persist.c) ----
+ * Если в системе есть блочное устройство (hal/hal_blk.h), RamFS при старте
+ * загружается с него, а каждое изменение сразу пишется обратно. Без диска
+ * всё работает как раньше, только в ОЗУ. Вызывающему коду ничего делать не
+ * нужно; функции ниже — для диагностики. */
+enum {
+    RAMFS_PERSIST_NONE = 0,       /* диска нет — работаем в ОЗУ               */
+    RAMFS_PERSIST_MOUNTED,        /* дерево загружено с диска                  */
+    RAMFS_PERSIST_FORMATTED,      /* чистый диск отформатирован                */
+    RAMFS_PERSIST_FOREIGN,        /* на диске чужие данные — не трогаем        */
+    RAMFS_PERSIST_BAD_GEOMETRY,   /* наш формат, но с другими лимитами         */
+    RAMFS_PERSIST_TOO_SMALL,      /* диск меньше нужного                       */
+    RAMFS_PERSIST_ERROR           /* сбой ввода-вывода при подключении         */
+};
+
+int         ramfs_persist_state(void);        /* RAMFS_PERSIST_*                       */
+const char *ramfs_persist_state_name(void);   /* короткая строка для экрана/консоли   */
+unsigned    ramfs_persist_errors(void);       /* сколько записей/чтений не удалось    */
+
+/* Внутреннее: вызывается из ramfs.c */
+int  ramfs_persist_attach(ramfs_file_t *tbl, size_t n);  /* 1 — дерево загружено с диска */
+void ramfs_persist_save(const ramfs_file_t *tbl, size_t idx);
 
 #endif

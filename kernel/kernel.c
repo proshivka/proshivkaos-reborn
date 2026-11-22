@@ -2,9 +2,9 @@
  * только про hal.h.
  */
 #include "hal.h"
+#include "ramfs.h"
 
 void shell_run(void);   /* shell/shell.c */
-void ramfs_init(void);  /* fs/ramfs.c */
 
 void kmain(uint32_t multiboot_magic, void *multiboot_info) {
     (void)multiboot_magic;
@@ -15,7 +15,10 @@ void kmain(uint32_t multiboot_magic, void *multiboot_info) {
     ramfs_init();
 
     hal_console_write("proshivkaOS NEXT [ranniy etap]\n");
-    hal_console_write("HAL: console/mem/fs initialized.\n\n");
+    hal_console_write("HAL: console/mem/fs initialized.\n");
+    hal_console_write("fs: ");
+    hal_console_write(ramfs_persist_state_name());
+    hal_console_write("\n\n");
 
     shell_run();
 

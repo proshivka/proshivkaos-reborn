@@ -204,6 +204,8 @@ void hal_gfx_draw_string_transparent(int x, int y, const char *s, uint8_t fg);
  * ~300 dpi это буква высотой меньше миллиметра. scale=2..4 — рабочий
  * диапазон; каждый пиксель глифа рисуется квадратом scale x scale. */
 void hal_gfx_draw_char_scaled(int x, int y, char c, uint8_t fg, uint8_t bg, int scale);
+/* То же по коду Юникода (кириллица и др.); нужен масштаб >= 2, иначе "?". */
+void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale);
 void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int scale);
 
 /* Ширина строки в пикселях при заданном масштабе — для центрирования. */

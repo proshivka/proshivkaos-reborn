@@ -10,7 +10,7 @@
 #include "ramfs.h"
 
 #define TERM_LINE_BUF   100   /* было 48: длинная команда молча обрезалась */
-#define TERM_HOME_DIR   "/root"
+#define TERM_HOME_DIR   "/"
 
 typedef struct terminal_app {
     gconsole_t console;
