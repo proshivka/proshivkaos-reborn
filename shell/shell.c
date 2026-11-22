@@ -229,7 +229,7 @@ static void nf_info(int row) {
 
     const char *label = 0, *value = 0;
     switch (row) {
-    case 2: label = "kernel"; value = "microkernel, etap 1";    break;
+    case 2: label = "kernel"; value = "microkernel, etap 2";    break;
     case 3: label = "hal   "; value = "console/mem/thread(stub)"; break;
     case 4: label = "fs    "; value = 0;                        break;
     case 5: label = "arch  "; value = hal_arch_name();          break;

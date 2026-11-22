@@ -142,8 +142,8 @@ endif
 # Верхняя граница — GFXFB_MAX_PIXELS (720x1440), см. gui/gfxfb.h.
 # Игнорируется, если BOARD задаёт готовый фреймбуфер загрузчика (mido) —
 # там разрешение диктует само железо, см. arch/arm64/boards/mido.h.
-SCREEN_W ?= 400
-SCREEN_H ?= 800
+SCREEN_W ?= 480
+SCREEN_H ?= 960
 
 # Конкретная плата (имеет смысл только для ARCH=arm64). По умолчанию —
 # эмулятор (arch/arm64/boards/qemu.h). BOARD=mido подключает
