@@ -34,10 +34,16 @@ typedef struct {
      * ~300 dpi высота буквы получается меньше миллиметра. */
     int scale;
 
-    char lines[GC_MAX_LINES][GC_MAX_LINE_LEN];
+    /* Клетка хранит КОД СИМВОЛА Юникода (BMP), а не байт: кириллица в
+     * UTF-8 — два байта на букву, и клетка на экране — одна буква.
+     * Байты, приходящие через gconsole_putc(), собираются в символы тут же,
+     * недособранный остаток лежит в u8_cp/u8_left. */
+    uint16_t lines[GC_MAX_LINES][GC_MAX_LINE_LEN];
     uint8_t color[GC_MAX_LINES][GC_MAX_LINE_LEN];   /* цвет каждого символа отдельно */
     int  line_len[GC_MAX_LINES];
     int  line_count;
+    uint32_t u8_cp;     /* символ, собранный из уже пришедших байтов */
+    int      u8_left;   /* сколько продолжающих байтов ещё ждём      */
     uint8_t fg, bg;
     uint8_t ink;   /* цвет, которым пишутся СЛЕДУЮЩИЕ символы — см. gconsole_set_ink() */
 
@@ -52,7 +58,7 @@ typedef struct {
      * клетке, и рисуются только расхождения. Правильность при этом
      * получается сама: если текст прокрутился, расходятся все клетки,
      * и перерисовывается всё. А набор одной буквы — одна клетка. */
-    char    shadow_ch[GC_SHADOW_ROWS][GC_SHADOW_COLS];
+    uint16_t shadow_ch[GC_SHADOW_ROWS][GC_SHADOW_COLS];
     uint8_t shadow_fg[GC_SHADOW_ROWS][GC_SHADOW_COLS];
     int     shadow_valid;
     int     shadow_x, shadow_y, shadow_cols, shadow_rows, shadow_scale;
@@ -66,7 +72,11 @@ void gconsole_clear(gconsole_t *gc);
  * полной. Нужна при возврате в приложение с другого экрана. */
 void gconsole_invalidate(gconsole_t *gc);
 int  gconsole_is_valid(const gconsole_t *gc);
+/* Байт потока UTF-8: многобайтные символы собираются из нескольких вызовов.
+ * ASCII (в том числе '\n' и '\b') работает как раньше. */
 void gconsole_putc(gconsole_t *gc, char c);
+/* Сразу символ по коду Юникода (то, что отдаёт экранная клавиатура). */
+void gconsole_putcp(gconsole_t *gc, uint32_t cp);
 void gconsole_write(gconsole_t *gc, const char *s);
 void gconsole_render(gconsole_t *gc);   /* пересчитывает перенос строк и рисует */
 

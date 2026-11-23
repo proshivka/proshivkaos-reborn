@@ -63,9 +63,9 @@ static const char *base_name(const char *path) {
 
 /* ---------------- Геометрия ---------------- */
 
-/* Текст — основным масштабом, а не мелким: на экране 480 мелкий равен 1, а
- * там вместо сглаженного шрифта пиксельный 8x8, в котором кириллицы нет. */
-static int text_scale(void) { return TM.scale; }
+/* Текст — не мельче 2-го масштаба (см. touch_text_scale): на масштабе 1
+ * вместо сглаженного шрифта пиксельный 8x8, в котором кириллицы нет. */
+static int text_scale(void) { return touch_text_scale(); }
 static int line_h(void) { return FONT_H * text_scale(); }
 static int char_w(void) { return hal_gfx_cell_w(text_scale()); }
 

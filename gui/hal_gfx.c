@@ -546,16 +546,23 @@ void hal_gfx_draw_char_scaled(int x, int y, char c, uint8_t fg, uint8_t bg, int 
 
 /* Один символ по коду Юникода — клетка моноширинной сетки, как у
  * hal_gfx_draw_char_scaled(), но не ограниченная байтом: так рисуется
- * кириллица. Без сглаженного шрифта (масштаб 1) есть только ASCII, всё
- * остальное рисуется знаком "?". Символа нет в шрифте — тоже "?". */
+ * кириллица. На масштабе 1 пиксельный шрифт 8x8 знает только ASCII, поэтому
+ * всё остальное рисуется мелкой сглаженной гарнитурой (g_font_mono[1],
+ * она сделана ровно под сетку 8x8) — латиница остаётся пиксельной, а
+ * кириллица не превращается в "?". Символа нет в шрифте — рисуется "?". */
 void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale) {
     if (cp < 0x80) { hal_gfx_draw_char_scaled(x, y, (char)cp, fg, bg, scale); return; }
 
     if (scale < 1) scale = 1;
     int s = aa_scale(scale);
-    if (!s) { hal_gfx_draw_char_scaled(x, y, '?', fg, bg, scale); return; }
-
-    int cw = font_mono_advance(scale);
+    int cw;
+    if (s) {
+        cw = font_mono_advance(scale);
+    } else {
+        s = 1;
+        scale = 1;
+        cw = FONT_W;                      /* та же клетка, что у пиксельного шрифта */
+    }
     gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
     font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw, cp, hal_gfx_palette_rgb(fg));
 }
@@ -581,6 +588,16 @@ void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int sca
             line[n] = 0;
             cx += font_draw(&g_font_ui[as], cx, y, scale, line, hal_gfx_palette_rgb(fg));
             s += n;
+            continue;
+        }
+
+        if ((unsigned char)*s >= 0x80) {
+            /* Не ASCII (кириллица): в пиксельном шрифте этого нет, берём
+               мелкую сглаженную гарнитуру, см. hal_gfx_draw_cp_scaled(). */
+            uint32_t cp = font_next_cp(&s);
+            font_draw_cp_centered(&g_font_mono[1], cx, y, 1, FONT_W * scale, cp,
+                                  hal_gfx_palette_rgb(fg));
+            cx += FONT_W * scale;
             continue;
         }
 
@@ -613,7 +630,10 @@ int hal_gfx_string_width(const char *s, int scale) {
             line[k] = 0;
             w = font_width(&g_font_ui[as], line);
         } else {
-            w = n * FONT_W * scale;
+            int chars = 0;                      /* символы, а не байты UTF-8 */
+            for (int i = 0; i < n; i++)
+                if (((unsigned char)s[i] & 0xC0) != 0x80) chars++;
+            w = chars * FONT_W * scale;
         }
         if (w > best) best = w;
         s += n;

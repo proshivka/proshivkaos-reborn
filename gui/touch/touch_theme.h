@@ -36,6 +36,12 @@ extern touch_metrics_t TM;
 
 void touch_theme_init(int screen_w, int screen_h);
 
+/* Масштаб для текста, который может быть кириллицей. На узком экране
+ * (до 480 px, например QEMU 400x800) TM.scale равен 1, а hal_gfx на
+ * масштабе 1 рисует пиксельным шрифтом 8x8 — кириллицы в нём нет вовсе.
+ * Со второго масштаба идёт сглаженный Roboto, где она есть. */
+static inline int touch_text_scale(void) { return TM.scale < 2 ? 2 : TM.scale; }
+
 /* Область, доступная приложению: между статусбаром и навбаром. */
 void touch_theme_content_rect(int *x, int *y, int *w, int *h);
 

@@ -57,11 +57,9 @@ static void terminal_invalidate(void) {
 }
 
 static void terminal_on_key(int key) {
-    /* Экранная клавиатура теперь отдаёт и коды Юникода (кириллица), а
-       терминал пока байтовый: без этой проверки "й" (U+0439) обрезалась
-       бы до байта 0x39 и в строку попадала бы цифра "9". */
-    if (key >= 128) return;
-    terminal_app_handle_char(&g_term, (char)key);
+    /* key — код символа Юникода (экранная клавиатура, в том числе русская)
+       или обычный ASCII; терминал сам собирает из него UTF-8. */
+    terminal_app_handle_key(&g_term, key);
 }
 
 static void terminal_on_touch(int type, int x, int y) {

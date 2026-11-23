@@ -1,5 +1,10 @@
 /* shell/lineedit.c — редактор строки для shell.
  *
+ * Строка — UTF-8: байты ≥ 0x80 принимаются и эхом уходят в консоль как
+ * есть, а Backspace/Ctrl+U/↑↓ считают СИМВОЛЫ (одна буква = одно "\b \b",
+ * сколько бы байт она ни занимала). Лимит длины — в байтах, но символ
+ * берётся целиком или не берётся вовсе.
+ *
  * Использует только hal_console_putc/write и hal_console_getc, поэтому
  * не зависит от архитектуры. Редактирование — только в конце строки
  * (Backspace); перемещение курсора по строке стрелками влево/вправо
@@ -9,6 +14,7 @@
 #include "hal.h"
 #include "ramfs.h"
 #include "lineedit.h"
+#include "utf8.h"
 
 #define LINE_CAP   128              /* не меньше CMD_BUF_SIZE из shell.c */
 #define HIST_MAX   16
@@ -50,6 +56,14 @@ static int get_key(void) {
     return c;
 }
 
+/* Сколько символов (не байт) в первых n байтах строки. */
+static size_t char_count(const char *s, size_t n) {
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++)
+        if (((unsigned char)s[i] & 0xC0) != 0x80) k++;
+    return k;
+}
+
 static void erase_chars(size_t n) {
     while (n--) hal_console_write("\b \b");
 }
@@ -68,9 +82,11 @@ static void hist_add(const char *line) {
 }
 
 static void replace_line(char *buf, size_t *len, const char *src, size_t max) {
-    erase_chars(*len);
+    erase_chars(char_count(buf, *len));
     size_t n = 0;
     while (src[n] && n < max - 1) { buf[n] = src[n]; n++; }
+    /* Не оставляем половину буквы, если строка обрезана по max. */
+    while (n > 0 && src[n] && ((unsigned char)src[n] & 0xC0) == 0x80) n--;
     buf[n] = '\0';
     *len = n;
     hal_console_write(buf);
@@ -166,12 +182,15 @@ size_t line_read(char *buf, size_t max, void (*prompt)(void),
     if (max > LINE_CAP) max = LINE_CAP;
 
     size_t len = 0;
+    int skip = 0;                                    /* сколько продолжающих байтов UTF-8 ждём */
+    int keep = 0;                                    /* символ, который собираем, берём в строку */
     int pos = hist_n;                                /* == hist_n: правим новую строку */
     buf[0] = '\0';
     saved[0] = '\0';
 
     for (;;) {
         int c = get_key();
+        if (c < 0x80 || c > 0xFF) skip = 0;          /* оборванную последовательность забываем */
 
         if (c == '\n' || c == '\r') {
             hal_console_putc('\n');
@@ -179,7 +198,11 @@ size_t line_read(char *buf, size_t max, void (*prompt)(void),
             hist_add(buf);
             return len;
         } else if (c == '\b' || c == 127) {
-            if (len) { len--; buf[len] = '\0'; hal_console_write("\b \b"); }
+            if (len) {
+                len = (size_t)utf8_prev(buf, (int)len, (int)len);   /* символ целиком */
+                buf[len] = '\0';
+                hal_console_write("\b \b");
+            }
         } else if (c == '\t') {
             complete(buf, &len, max, prompt, cmds, ncmds);
         } else if (c == HAL_KEY_UP) {
@@ -194,7 +217,7 @@ size_t line_read(char *buf, size_t max, void (*prompt)(void),
                 replace_line(buf, &len, pos == hist_n ? saved : hist[pos], max);
             }
         } else if (c == 0x15) {                      /* Ctrl+U */
-            erase_chars(len);
+            erase_chars(char_count(buf, len));
             len = 0;
             buf[0] = '\0';
         } else if (c == 0x03) {                      /* Ctrl+C */
@@ -203,6 +226,21 @@ size_t line_read(char *buf, size_t max, void (*prompt)(void),
             return 0;
         } else if (c >= 32 && c < 127) {
             add_char(buf, &len, max, (char)c);
+        } else if (c >= 0x80 && c <= 0xFF) {
+            /* Байт UTF-8. Начало символа берём, только если он поместится
+               целиком; остаток его байтов (skip) принимаем или отбрасываем
+               вместе с ним. */
+            unsigned char b = (unsigned char)c;
+            if ((b & 0xC0) == 0x80) {
+                if (skip == 0) continue;               /* лишний продолжающий байт */
+                if (skip > 0 && keep) add_char(buf, &len, max, (char)b);
+                skip--;
+            } else {
+                int need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : 2;
+                keep = (len + (size_t)need <= max - 1);
+                skip = need - 1;
+                if (keep) add_char(buf, &len, max, (char)b);
+            }
         }
         /* остальные коды (HAL_KEY_LEFT/RIGHT/HOME/END, прочие Ctrl) игнорируются */
     }
