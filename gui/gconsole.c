@@ -1,5 +1,6 @@
 /* gui/gconsole.c */
 #include "gconsole.h"
+#include "utf8.h"
 
 static void push_new_line(gconsole_t *gc) {
     if (gc->line_count < GC_MAX_LINES) {
@@ -64,6 +65,7 @@ int  gconsole_is_valid(const gconsole_t *gc) { return gc->shadow_valid; }
 void gconsole_clear(gconsole_t *gc) {
     gc->line_count = 1;
     gc->line_len[0] = 0;
+    gc->u8_left = 0;
 }
 
 void gconsole_set_colors(gconsole_t *gc, uint8_t fg, uint8_t bg) {
@@ -76,16 +78,18 @@ void gconsole_set_ink(gconsole_t *gc, uint8_t color) {
     gc->ink = color;
 }
 
-void gconsole_putc(gconsole_t *gc, char c) {
-    if (c == '\n') {
+void gconsole_putcp(gconsole_t *gc, uint32_t cp) {
+    if (cp == '\n') {
         push_new_line(gc);
         return;
     }
-    if (c == '\b') {
+    if (cp == '\b') {
+        /* Одна клетка = один символ, как бы много байт он ни занимал. */
         int i = gc->line_count - 1;
         if (gc->line_len[i] > 0) gc->line_len[i]--;
         return;
     }
+    if (cp > 0xFFFF) cp = UTF8_BAD;            /* за пределами BMP шрифта нет */
 
     int i = gc->line_count - 1;
     if (gc->line_len[i] >= GC_MAX_LINE_LEN) {
@@ -93,8 +97,31 @@ void gconsole_putc(gconsole_t *gc, char c) {
         i = gc->line_count - 1;
     }
     int pos = gc->line_len[i]++;
-    gc->lines[i][pos] = c;
+    gc->lines[i][pos] = (uint16_t)cp;
     gc->color[i][pos] = gc->ink;
+}
+
+/* Поток байтов -> символы. Битая последовательность даёт один символ-
+ * заменитель (рисуется как "?"), а байт, который её оборвал, разбирается
+ * заново — так мусор в выводе не съедает следующий нормальный символ. */
+void gconsole_putc(gconsole_t *gc, char c) {
+    unsigned char b = (unsigned char)c;
+
+    if (gc->u8_left) {
+        if ((b & 0xC0) == 0x80) {
+            gc->u8_cp = (gc->u8_cp << 6) | (b & 0x3F);
+            if (--gc->u8_left == 0) gconsole_putcp(gc, gc->u8_cp);
+            return;
+        }
+        gc->u8_left = 0;
+        gconsole_putcp(gc, UTF8_BAD);
+    }
+
+    if (b < 0x80)                    gconsole_putcp(gc, b);
+    else if (b >= 0xC2 && b <= 0xDF) { gc->u8_cp = b & 0x1F; gc->u8_left = 1; }
+    else if (b >= 0xE0 && b <= 0xEF) { gc->u8_cp = b & 0x0F; gc->u8_left = 2; }
+    else if (b >= 0xF0 && b <= 0xF4) { gc->u8_cp = b & 0x07; gc->u8_left = 3; }
+    else                             gconsole_putcp(gc, UTF8_BAD);
 }
 
 void gconsole_write(gconsole_t *gc, const char *s) {
@@ -112,7 +139,7 @@ static int wrapped_row_count(int len, int cols) {
 /* Нарисовать клетку, если она отличается от того, что уже на экране. */
 static void put_cell(gconsole_t *gc, int use_shadow, int full,
                      int cx, int cy, int cell_w, int cell_h, int scale,
-                     int r, int c, char ch, uint8_t fg) {
+                     int r, int c, uint16_t ch, uint8_t fg) {
     if (use_shadow && !full &&
         gc->shadow_ch[r][c] == ch &&
         (ch == ' ' || gc->shadow_fg[r][c] == fg))
@@ -120,7 +147,7 @@ static void put_cell(gconsole_t *gc, int use_shadow, int full,
 
     /* Пробел на свежезалитом фоне рисовать незачем: это ровно фон. */
     if (!(full && ch == ' '))
-        hal_gfx_draw_char_scaled(cx + c * cell_w, cy + r * cell_h, ch, fg, gc->bg, scale);
+        hal_gfx_draw_cp_scaled(cx + c * cell_w, cy + r * cell_h, ch, fg, gc->bg, scale);
 
     if (use_shadow) {
         gc->shadow_ch[r][c] = ch;

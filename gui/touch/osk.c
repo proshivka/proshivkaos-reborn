@@ -170,7 +170,7 @@ void osk_render(void) {
             hal_gfx_draw_glossy_button(x, y, w, h, top, bot, GFX_UI_DIVIDER, TM.radius);
 
             const char *label = rows[row].keys[i].label;
-            int ls = (code == K_LAYER || code == K_LANG || code == K_HIDE) ? TM.scale_small : TM.scale;
+            int ls = (code == K_LAYER || code == K_LANG || code == K_HIDE) ? TM.scale_small : touch_text_scale();
             int ty = y + (h - FONT_H * ls) / 2;
             hal_gfx_draw_string_centered(x, ty, w, label, GFX_UI_TEXT, ls);
         }

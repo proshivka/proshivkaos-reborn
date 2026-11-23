@@ -184,8 +184,8 @@ static void render_viewer(void) {
     /* Перенос по ширине области, с учётом прокрутки по строкам. */
     /* Основной масштаб, как в редакторе: при мелком (1 на узком экране)
        кириллицы в шрифте нет. */
-    int cw = hal_gfx_cell_w(TM.scale);
-    int chx = FONT_H * TM.scale;
+    int cw = hal_gfx_cell_w(touch_text_scale());
+    int chx = FONT_H * touch_text_scale();
     int cols = (g_w - TM.pad * 4) / cw;
     if (cols < 1) return;
 
@@ -201,7 +201,7 @@ static void render_viewer(void) {
         if (py >= list_area_y() && py + chx <= g_y + g_h) {
             uint32_t shown = (cp < 32 || cp == 127 || cp == UTF8_BAD) ? ' ' : cp;
             hal_gfx_draw_cp_scaled(area_x + col * cw, py, shown,
-                                    GFX_UI_TEXT, GFX_UI_BG, TM.scale);
+                                    GFX_UI_TEXT, GFX_UI_BG, touch_text_scale());
         }
         col++;
         if (col >= cols) { col = 0; line++; }

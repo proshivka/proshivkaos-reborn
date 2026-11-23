@@ -1,6 +1,7 @@
 /* gui/terminal_app.c */
 #include "terminal_app.h"
 #include "hal_time.h"
+#include "utf8.h"
 
 static int str_eq(const char *a, const char *b) {
     while (*a && *b) { if (*a != *b) return 0; a++; b++; }
@@ -295,18 +296,32 @@ void terminal_app_init_colors(terminal_app_t *app, const gui_window_t *win,
 }
 
 void terminal_app_handle_char(terminal_app_t *app, char c) {
+    terminal_app_handle_key(app, (unsigned char)c);
+}
+
+void terminal_app_handle_key(terminal_app_t *app, int key) {
+    /* Коды HAL_KEY_* лежат в 0x100..0x10F и символами не являются. */
+    if (key < 0 || (key >= 0x100 && key < 0x110)) return;
+    uint32_t cp = (uint32_t)key;
+
     /* Идёт команда: ввод не принимаем, только Ctrl+C (код 3) её прерывает. */
     if (app->busy) {
         if (app->raw) {
-            if (app->rq_tail - app->rq_head < sizeof app->rq)
-                app->rq[app->rq_tail++ % sizeof app->rq] = (uint8_t)c;
-        } else if (c == 3) {
+            /* Команде (ssh) нужны байты, а не символы. */
+            char enc[4];
+            int n = utf8_encode(cp, enc);
+            for (int k = 0; k < n; k++)
+                if (app->rq_tail - app->rq_head < sizeof app->rq)
+                    app->rq[app->rq_tail++ % sizeof app->rq] = (uint8_t)enc[k];
+        } else if (cp == 3) {
             app->cancel = 1;
         }
         return;
     }
 
-    if (c == '\n') {
+    if (cp == '\r') cp = '\n';
+
+    if (cp == '\n') {
         app->line[app->line_len] = '\0';
 
         if (app->in_edit_mode) {
@@ -331,13 +346,22 @@ void terminal_app_handle_char(terminal_app_t *app, char c) {
         if (!app->in_edit_mode) print_prompt(app);
         else gconsole_write(&app->console, "\n. ");
 
-    } else if (c == '\b') {
+    } else if (cp == '\b' || cp == 127) {
+        /* Стираем символ целиком: в UTF-8 буква — несколько байт, а на
+           экране это одна клетка. */
         if (app->line_len > 0) {
-            app->line_len--;
-            gconsole_putc(&app->console, '\b');
+            app->line_len = utf8_prev(app->line, app->line_len, app->line_len);
+            gconsole_putcp(&app->console, '\b');
         }
-    } else if (app->line_len < TERM_LINE_BUF - 1) {
-        app->line[app->line_len++] = c;
-        gconsole_putc(&app->console, c);
+
+    } else if (cp >= 32) {
+        char enc[4];
+        int n = utf8_encode(cp, enc);
+        /* Влезает целиком или не берём вовсе — половина буквы в строке
+           дала бы битый UTF-8. */
+        if (n > 0 && app->line_len + n < TERM_LINE_BUF) {
+            for (int k = 0; k < n; k++) app->line[app->line_len++] = enc[k];
+            gconsole_putcp(&app->console, cp);
+        }
     }
 }

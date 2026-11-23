@@ -14,7 +14,7 @@
 
 typedef struct terminal_app {
     gconsole_t console;
-    char line[TERM_LINE_BUF];
+    char line[TERM_LINE_BUF];   /* UTF-8; line_len — в БАЙТАХ */
     int line_len;
 
     char cwd[RAMFS_MAX_PATH_LEN];
@@ -44,6 +44,11 @@ void terminal_app_init(terminal_app_t *app, const gui_window_t *win);
  * (цвет запоминается у каждого символа отдельно, см. gconsole_t.color). */
 void terminal_app_init_colors(terminal_app_t *app, const gui_window_t *win,
                                uint8_t fg, uint8_t bg);
+/* Ввод. Строка хранится в UTF-8: терминал принимает и кириллицу.
+ *   handle_key  — символ по коду Юникода (экранная клавиатура тач-сборки).
+ *                 Коды HAL_KEY_* (0x100..0x10F: стрелки и т.п.) игнорируются.
+ *   handle_char — старый вход для байтового ASCII (десктопная клавиатура). */
+void terminal_app_handle_key(terminal_app_t *app, int key);
 void terminal_app_handle_char(terminal_app_t *app, char c);
 
 /* Внешние команды. Терминал сам про них ничего не знает: если команда не
