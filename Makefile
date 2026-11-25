@@ -235,7 +235,7 @@ ifeq ($(ARCH),x86)
   TEXT_SOURCES := $(CORE_SOURCES) \
       kernel/kernel.c kernel/panic.c \
       hal/hal_console.c \
-      arch/x86/vga.c arch/x86/keyboard.c arch/x86/cpu.c \
+      arch/x86/vga.c arch/x86/font8x16_data.c arch/x86/keyboard.c arch/x86/cpu.c \
       arch/x86/ata_pio.c \
       arch/x86/pci.c arch/x86/net_rtl8139.c arch/x86/entropy.c \
       net/netcore.c net/udp.c net/dhcp.c net/dns.c net/tcp.c net/ping.c \

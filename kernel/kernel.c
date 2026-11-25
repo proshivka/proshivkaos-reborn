@@ -14,7 +14,7 @@ void kmain(uint32_t multiboot_magic, void *multiboot_info) {
     hal_mem_init();
     ramfs_init();
 
-    hal_console_write("proshivkaOS NEXT [ranniy etap]\n");
+    hal_console_write("proshivkaOS NEXT [ранний этап]\n");
     hal_console_write("HAL: console/mem/fs initialized.\n");
     hal_console_write("fs: ");
     hal_console_write(ramfs_persist_state_name());

@@ -124,7 +124,7 @@ void ramfs_init(void) {
        нет диска), чтобы не воскрешать то, что пользователь изменил. */
     if (!loaded) {
         create_entry("/welcome.txt", 0);
-        ramfs_write("/welcome.txt", "proshivkaOS NEXT RamFS rabotaet.\n", 34);
+        ramfs_write("/welcome.txt", "proshivkaOS Next - самостоятельная ОС на nasm и C.\n", 34);
     }
 }
 

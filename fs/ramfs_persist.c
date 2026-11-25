@@ -602,12 +602,12 @@ unsigned ramfs_persist_errors(void) { return g_errors; }
 
 const char *ramfs_persist_state_name(void) {
     switch (g_state) {
-    case RAMFS_PERSIST_MOUNTED:       return "disk podklyuchen";
-    case RAMFS_PERSIST_FORMATTED:     return "disk otformatirovan";
-    case RAMFS_PERSIST_FOREIGN:       return "chuzhoy disk, ne trogayu";
-    case RAMFS_PERSIST_BAD_GEOMETRY:  return "format drugoy geometrii";
-    case RAMFS_PERSIST_TOO_SMALL:     return "disk slishkom mal";
-    case RAMFS_PERSIST_ERROR:         return "oshibka diska";
-    default:                          return "net diska";
+    case RAMFS_PERSIST_MOUNTED:       return "диск подключен";
+    case RAMFS_PERSIST_FORMATTED:     return "диск отформатирован";
+    case RAMFS_PERSIST_FOREIGN:       return "чужой диск";
+    case RAMFS_PERSIST_BAD_GEOMETRY:  return "формат другой геометрии";
+    case RAMFS_PERSIST_TOO_SMALL:     return "недостаточно места на диске";
+    case RAMFS_PERSIST_ERROR:         return "ошибка диска";
+    default:                          return "диск отсутствует";
     }
 }

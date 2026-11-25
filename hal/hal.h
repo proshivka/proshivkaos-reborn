@@ -15,7 +15,7 @@
 
 /* Версия системы. Одна строка на весь проект: её показывают и neofetch в
  * терминале, и экран "о системе". */
-#define PROSHIVKAOS_VERSION "0.5.0"
+#define PROSHIVKAOS_VERSION "0.7.0"
 
 /* ---------------- Консоль ---------------- */
 void hal_console_init(void);

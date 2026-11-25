@@ -112,7 +112,7 @@ static void cmd_ls(int argc, char *argv[]) {
     if (!ramfs_is_dir(path)) {
         const ramfs_file_t *f = ramfs_lookup(path);
         if (!f) {
-            hal_console_write("ls: net takogo fayla ili papki: ");
+            hal_console_write("ls: нет такого объекта: ");
             hal_console_write(argc > 1 ? argv[1] : path);
             hal_console_putc('\n');
             return;
@@ -126,7 +126,7 @@ static void cmd_ls(int argc, char *argv[]) {
     size_t n = ramfs_list_dir(path, files, RAMFS_MAX_FILES);
 
     if (n == 0) {
-        hal_console_write("(pusto)\n");
+        hal_console_write("(пусто)\n");
         return;
     }
 
@@ -158,7 +158,7 @@ static void cmd_cd(int argc, char *argv[]) {
 
     hal_console_write("cd: ");
     hal_console_write(arg);
-    hal_console_write(ramfs_lookup(path) ? ": eto ne papka\n" : ": net takoy papki\n");
+    hal_console_write(ramfs_lookup(path) ? ": это не директория\n" : ": нет такой директории\n");
 }
 
 static void cmd_cat(int argc, char *argv[]) {
@@ -172,7 +172,7 @@ static void cmd_cat(int argc, char *argv[]) {
 
     const ramfs_file_t *f = ramfs_lookup(path);
     if (!f) {
-        hal_console_write("cat: fayl ne nayden: ");
+        hal_console_write("cat: файл не найден: ");
         hal_console_write(argv[1]);
         hal_console_putc('\n');
         return;
@@ -197,7 +197,7 @@ static void cmd_cat(int argc, char *argv[]) {
 
 static void cmd_touch(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("usage: touch <file>\n");
+        hal_console_write("usage: touch <файл>\n");
         return;
     }
 
@@ -205,7 +205,7 @@ static void cmd_touch(int argc, char *argv[]) {
     path_resolve(argv[1], path, sizeof(path));
 
     if (ramfs_touch(path) != 0)
-        hal_console_write("touch: ne udalos sozdat fayl\n");
+        hal_console_write("touch: не удалось создать файл\n");
 }
 
 /* neofetch: логотип слева, сведения справа. Консоль у нас построчная, без
@@ -240,7 +240,7 @@ static void nf_info(int row) {
 
     const char *label = 0, *value = 0;
     switch (row) {
-    case 2: label = "kernel"; value = "microkernel, etap 2";    break;
+    case 2: label = "kernel"; value = "microkernel, этап 2";    break;
     case 3: label = "hal   "; value = "console/mem/thread(stub)"; break;
     case 4: label = "fs    "; value = 0;                        break;
     case 5: label = "arch  "; value = hal_arch_name();          break;
@@ -327,13 +327,13 @@ static void cmd_df(void) {
         hal_console_write("  free "); print_size_human(free_b);
         hal_console_putc('\n');
     } else {
-        hal_console_write("disk   : net (tolko RamFS)\n");
+        hal_console_write("disk   : отсутствует\n");
     }
     hal_console_write("ramfs  : "); print_size_human(ram_bytes);
-    hal_console_write(" zanyato, "); print_uint((unsigned)used_entries);
+    hal_console_write(" занято, "); print_uint((unsigned)used_entries);
     hal_console_write("/"); print_uint(RAMFS_MAX_ENTRIES);
-    hal_console_write(" zapisey\n");
-    hal_console_write("status : "); hal_console_write(ramfs_persist_state_name());
+    hal_console_write(" записей\n");
+    hal_console_write("состояние : "); hal_console_write(ramfs_persist_state_name());
     hal_console_putc('\n');
 }
 
@@ -342,7 +342,7 @@ static void cmd_fsinfo(void) {
     hal_console_write(ramfs_persist_state_name());
     hal_console_write("\n");
     if (ramfs_persist_errors()) {
-        hal_console_write("oshibok diska: ");
+        hal_console_write("ошибок диска: ");
         print_uint(ramfs_persist_errors());
         hal_console_write("\n");
     }
@@ -384,12 +384,12 @@ static void cmd_ifconfig(void) {
 }
 
 static void cmd_dhcp(void) {
-    hal_console_write("dhcp: zapros adresa...\n");
+    hal_console_write("dhcp: запрос адреса...\n");
     if (dhcp_acquire() != 0) {
-        hal_console_write("dhcp: server ne otvetil\n");
+        hal_console_write("dhcp: нет ответа\n");
         return;
     }
-    hal_console_write("dhcp: poluchen ");
+    hal_console_write("dhcp: адрес получен ");
     put_ip(net_cfg.ip);
     hal_console_putc('\n');
 }
@@ -415,7 +415,7 @@ static void cmd_udpsend(int argc, char *argv[]) {
     uint8_t ip[4];
     uint16_t port;
     if (argc < 4 || parse_ip(argv[1], ip) != 0 || parse_port(argv[2], &port) != 0) {
-        hal_console_write("usage: udpsend <a.b.c.d> <port> <text>\n");
+        hal_console_write("usage: udpsend <a.b.c.d> <порт> <текст>\n");
         return;
     }
 
@@ -429,19 +429,19 @@ static void cmd_udpsend(int argc, char *argv[]) {
     text[len++] = '\n';
 
     int r = udp_send(ip, 40000, port, text, len);
-    if (r == NET_OK)           hal_console_write("otpravleno\n");
-    else if (r == NET_ERR_ARP) hal_console_write("udpsend: net MAC dlya next-hop (arp)\n");
-    else                       hal_console_write("udpsend: oshibka otpravki\n");
+    if (r == NET_OK)           hal_console_write("отправлено\n");
+    else if (r == NET_ERR_ARP) hal_console_write("udpsend: нет MAC-адреса для next-hop (arp)\n");
+    else                       hal_console_write("udpsend: ошибка отправки\n");
 }
 
 static void print_dns_error(int r) {
     switch (r) {
-    case DNS_ERR_NAME:     hal_console_write("dns: nepravilnoe imya\n"); break;
-    case DNS_ERR_TIMEOUT:  hal_console_write("dns: server ne otvetil (est li adres? komanda dhcp)\n"); break;
-    case DNS_ERR_NXDOMAIN: hal_console_write("dns: takogo imeni net\n"); break;
-    case DNS_ERR_NOADDR:   hal_console_write("dns: net A-zapisi\n"); break;
-    case DNS_ERR_NET:      hal_console_write("dns: oshibka otpravki\n"); break;
-    default:               hal_console_write("dns: server vernul oshibku\n"); break;
+    case DNS_ERR_NAME:     hal_console_write("dns: неверное имя\n"); break;
+    case DNS_ERR_TIMEOUT:  hal_console_write("dns: нет ответа (проверьте адрес)\n"); break;
+    case DNS_ERR_NXDOMAIN: hal_console_write("dns: имя не найдено\n"); break;
+    case DNS_ERR_NOADDR:   hal_console_write("dns: нет A-записи\n"); break;
+    case DNS_ERR_NET:      hal_console_write("dns: ошибка отправки\n"); break;
+    default:               hal_console_write("dns: сервер вернул ошибку\n"); break;
     }
 }
 
@@ -472,7 +472,7 @@ static void req_add(char *buf, size_t *len, size_t cap, const char *s) {
  * (example.com, neverssl.com). */
 static void cmd_http(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("usage: http <host> [path]\n");
+        hal_console_write("usage: http <хост> [путь]\n");
         return;
     }
     const char *host = argv[1];
@@ -487,9 +487,9 @@ static void cmd_http(int argc, char *argv[]) {
     hal_console_write("connect "); put_ip(ip); hal_console_write(":80\n");
     int r = tcp_connect(ip, 80);
     if (r != TCP_OK) {
-        hal_console_write(r == TCP_ERR_RESET   ? "http: port zakryt (RST)\n"
-                        : r == TCP_ERR_TIMEOUT ? "http: taymaut soedineniya\n"
-                                               : "http: oshibka soedineniya\n");
+        hal_console_write(r == TCP_ERR_RESET   ? "http: порт закрыт (RST)\n"
+                        : r == TCP_ERR_TIMEOUT ? "http: timeout\n"
+                                               : "http: ошибка соединения\n");
         return;
     }
 
@@ -503,7 +503,7 @@ static void cmd_http(int argc, char *argv[]) {
     req_add(req, &rl, sizeof req, "\r\nUser-Agent: proshivkaos\r\nConnection: close\r\n\r\n");
 
     if (tcp_send(req, rl) < 0) {
-        hal_console_write("http: oshibka otpravki\n");
+        hal_console_write("http: ошибка отправки\n");
         tcp_close();
         return;
     }
@@ -513,7 +513,7 @@ static void cmd_http(int argc, char *argv[]) {
     unsigned total = 0, shown = 0;
     for (;;) {
         int n = tcp_recv(buf, sizeof buf, NET_POLL_LIMIT);
-        if (n < 0) { hal_console_write("\nhttp: taymaut/oshibka priema\n"); break; }
+        if (n < 0) { hal_console_write("\nhttp: timeout\n"); break; }
         if (n == 0) break;                     /* сервер закрыл соединение */
 
         for (int i = 0; i < n; i++) {
@@ -527,10 +527,10 @@ static void cmd_http(int argc, char *argv[]) {
     }
     tcp_close();
 
-    hal_console_write("\n--- polucheno ");
+    hal_console_write("\n--- получено ");
     put_dec(total);
     hal_console_write(" bayt");
-    if (total > shown) hal_console_write(" (pokazano pervye 2000)");
+    if (total > shown) hal_console_write(" (показаны первые 2000)");
     hal_console_putc('\n');
 }
 
@@ -552,7 +552,7 @@ static void cmd_arping(void) {
     for (int i = 0; i < 4; i++) { f[28 + i] = ip_me[i]; f[38 + i] = ip_gw[i]; }
 
     if (hal_net_send(f, 42) != 0) {
-        hal_console_write("arping: oshibka otpravki\n");
+        hal_console_write("arping: ошибка отправки\n");
         return;
     }
 
@@ -560,13 +560,13 @@ static void cmd_arping(void) {
     for (long t = 0; t < 20000000; t++) {
         size_t n = hal_net_recv(r, sizeof r);
         if (n >= 42 && r[12] == 0x08 && r[13] == 0x06 && r[21] == 0x02) {
-            hal_console_write("otvet ot 10.0.2.2, mac ");
+            hal_console_write("получено от 10.0.2.2, mac ");
             put_mac(r + 22);
             hal_console_putc('\n');
             return;
         }
     }
-    hal_console_write("arping: net otveta\n");
+    hal_console_write("arping: не отвечает\n");
 }
 
 static int parse_ip(const char *s, uint8_t out[4]) {
@@ -597,7 +597,7 @@ static void put_ip(const uint8_t *ip) {
 static void cmd_ping(int argc, char *argv[]) {
     uint8_t ip[4];
     if (argc < 2 || parse_ip(argv[1], ip) != 0) {
-        hal_console_write("usage: ping <a.b.c.d>\n");
+        hal_console_write("usage: ping <ip>\n");
         return;
     }
 
@@ -606,21 +606,21 @@ static void cmd_ping(int argc, char *argv[]) {
         int r = net_ping(ip, seq);
         if (r == PING_OK) {
             ok++;
-            hal_console_write("otvet ot "); put_ip(ip);
+            hal_console_write("получено от "); put_ip(ip);
             hal_console_write(": seq="); put_dec(seq); hal_console_putc('\n');
         } else if (r == PING_NO_ARP) {
-            hal_console_write("ping: net MAC dlya next-hop (arp)\n");
+            hal_console_write("ping: нет MAC-адреса next-hop (arp)\n");
             return;
         } else if (r == PING_TX_ERR) {
-            hal_console_write("ping: oshibka otpravki\n");
+            hal_console_write("ping: ошибка отправки\n");
             return;
         } else {
             hal_console_write("seq="); put_dec(seq);
-            hal_console_write(": net otveta\n");
+            hal_console_write(": не отвечает\n");
         }
     }
     hal_console_write("--- "); put_ip(ip); hal_console_write(": ");
-    put_dec((unsigned)ok); hal_console_write("/4 polucheno\n");
+    put_dec((unsigned)ok); hal_console_write("/4 получено\n");
 }
 
 /* Полноэкранный редактор (apps/editor.c) — binды в стиле micro:
@@ -628,7 +628,7 @@ static void cmd_ping(int argc, char *argv[]) {
  * отсутствии автоматически внутри editor_run() при первом сохранении. */
 static void cmd_edit(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("usage: edit <file>\n");
+        hal_console_write("использование: edit <файл>\n");
         return;
     }
 
@@ -641,27 +641,27 @@ static void cmd_edit(int argc, char *argv[]) {
 
 static void cmd_help(void) {
     hal_console_write(
-        "Dostupnye komandy:\n"
-        "  ls [papka]         - spisok faylov\n"
-        "  cd [papka]         - smenit papku (cd .., cd ~, cd /)\n"
-        "  cat <file>         - pokazat soderzhimoe fayla\n"
-        "  touch <file>       - sozdat pustoy fayl\n"
-        "  clear              - ochistit konsol\n"
-        "  echo               - vyvodit tekst\n"
-        "  edit <file>        - polnoekrannyy redaktor\n"
-        "                       (^S sohranit, ^Q vyhod, ^F poisk)\n"
-        "  neofetch           - info o sisteme\n"
-        "  df                 - svobodnoe mesto na diske\n"
-        "  fsinfo             - sostoyanie diska (sohranenie faylov)\n"
-        "  help               - eta spravka\n"
-        "  ifconfig           - MAC setevoy karty\n"
-        "  arping             - proverka seti (ARP k 10.0.2.2)\n"
+        "Доступные команды:\n"
+        "  ls [директория]         - список файлов\n"
+        "  cd [директория]         - сменить папку (cd .., cd ~, cd /)\n"
+        "  cat <файл>         - показать содержимое файла\n"
+        "  touch <файл>       - создать пустой файл\n"
+        "  clear              - очистить вывод консоли\n"
+        "  echo               - вывести текст\n"
+        "  edit <файл>        - редактор кода\n"
+        "                       (Ctrl+S сохранить, Ctrl+Q выход, Ctrl+F поиск)\n"
+        "  neofetch           - информация об устройстве\n"
+        "  df                 - свободное пространство на диске\n"
+        "  fsinfo             - состояние диска\n"
+        "  help               - эта справка\n"
+        "  ifconfig           - MAC-адрес сетевой карты\n"
+        "  arping             - проверка сети (ARP к 10.0.2.2)\n"
         "  ping <ip>          - ICMP echo\n"
-        "  dhcp               - poluchit adres po DHCP\n"
-        "  udpsend <ip> <p> <text> - otpravit UDP\n"
-        "  nslookup <name>    - uznat IP po imeni (DNS)\n"
-        "  http <host> [path] - HTTP GET po portu 80\n"
-        "  ssh [-p port] user@host [cmd] - SSH\n"
+        "  dhcp               - получить адрес по DHCP\n"
+        "  udpsend <ip> <p> <текст> - отправить UDP\n"
+        "  nslookup <имя>    - узнать IP-адрес по имени (DNS)\n"
+        "  http <хост> [путь] - HTTP GET по порту 80\n"
+        "  ssh [-p порт] user@host [флаг] - SSH\n"
     );
 }
 
@@ -739,7 +739,7 @@ static void exec_shell_cmd(int argc, char *argv[]) {
         else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
         else if (shell_try_netcmd(argc, argv)) {}
         else {
-            hal_console_write("neizvestnaya komanda: ");
+            hal_console_write("неизвестная команда: ");
             hal_console_write(argv[0]);
             hal_console_putc('\n');
         }
@@ -754,9 +754,9 @@ void shell_run(void) {
     cmd_help();
 
     if (hal_net_init() != 0)
-            hal_console_write("net: karta ne naydena\n");
+            hal_console_write("net: карта не найдена\n");
     if (hal_net_init() == 0) net_cfg_init();
-    else hal_console_write("net: karta ne naydena\n");
+    else hal_console_write("net: карта не найдена\n");
 
     for (;;) {
         print_prompt();
@@ -767,7 +767,7 @@ void shell_run(void) {
         int append = 0;
         int has_redir = split_redirect(line, &redir_file, &append);
         if (has_redir < 0) {
-            hal_console_write("oshibka sintaksisa: ukazhite fayl posle >\n");
+            hal_console_write("ошибка синтаксиса: укажите файл после >\n");
             continue;
         }
 
@@ -789,7 +789,7 @@ void shell_run(void) {
         hal_console_set_capture(0, 0);
 
         if (ramfs_is_dir(redir_path)) {
-            hal_console_write("oshibka: eto direktoriya\n");
+            hal_console_write("ошибка: это директория\n");
             continue;
         }
 
@@ -813,6 +813,6 @@ void shell_run(void) {
             wr = ramfs_write(redir_path, cap.buf, cap.len);
         }
         if (wr != 0)
-            hal_console_write("oshibka zapisi v fayl\n");
+            hal_console_write("ошибка записи\n");
     }
 }
