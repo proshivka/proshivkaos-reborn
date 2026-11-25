@@ -35,12 +35,21 @@ static void write_decimal(uint8_t v) {
     while (n > 0) uart_putc(buf[--n]);
 }
 
+static void (*g_capture_fn)(char c, void *ctx) = 0;
+static void *g_capture_ctx = 0;
+
+void hal_console_set_capture(void (*fn)(char c, void *ctx), void *ctx) {
+    g_capture_fn = fn;
+    g_capture_ctx = ctx;
+}
+
 void hal_console_init(void) {
     uart_init();
     uart_write("\033[0m\033[2J\033[H");   /* сброс атрибутов, очистка, курсор в угол */
 }
 
 void hal_console_putc(char c) {
+    if (g_capture_fn) { g_capture_fn(c, g_capture_ctx); return; }
     uart_putc(c);
 }
 
@@ -84,6 +93,10 @@ void hal_console_goto(int row, int col) {
 }
 
 void hal_console_write(const char *s) {
+    if (g_capture_fn) {
+        while (*s) g_capture_fn(*s++, g_capture_ctx);
+        return;
+    }
     uart_write(s);
 }
 

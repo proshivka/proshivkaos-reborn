@@ -142,8 +142,8 @@ endif
 # Верхняя граница — GFXFB_MAX_PIXELS (720x1440), см. gui/gfxfb.h.
 # Игнорируется, если BOARD задаёт готовый фреймбуфер загрузчика (mido) —
 # там разрешение диктует само железо, см. arch/arm64/boards/mido.h.
-SCREEN_W ?= 480
-SCREEN_H ?= 960
+SCREEN_W ?= 400
+SCREEN_H ?= 800
 
 # Конкретная плата (имеет смысл только для ARCH=arm64). По умолчанию —
 # эмулятор (arch/arm64/boards/qemu.h). BOARD=mido подключает
@@ -353,12 +353,14 @@ TOUCH_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     $(ARCH_GFX_SOURCES) $(ARCH_INPUT_SOURCES) \
     kernel/kernel_touch.c kernel/panic_gui.c \
     gui/window.c gui/cursor.c gui/gconsole.c gui/terminal_app.c \
+    gui/png.c \
     gui/touch/touch_theme.c \
     gui/touch/osk.c \
     gui/touch/app_terminal.c \
     gui/touch/app_settings.c \
     gui/touch/app_files.c \
     gui/touch/app_edit.c \
+    gui/touch/app_image.c \
     gui/touch/app_about.c \
     gui/touch/app_wifi.c \
     gui/touch/touch_ui.c
@@ -378,6 +380,20 @@ uniq = $(if $(1),$(firstword $(1)) $(call uniq,$(filter-out $(firstword $(1)),$(
 TEXT_OBJ  := $(call uniq,$(call obj_of,$(TEXT_SOURCES) $(TEXT_ASM) $(BOOT_S)))
 GUI_OBJ   := $(call uniq,$(call obj_of,$(GUI_SOURCES) $(BOOT_ASM) $(BOOT_S)))
 TOUCH_OBJ := $(call uniq,$(call obj_of,$(TOUCH_SOURCES) $(BOOT_ASM) $(BOOT_S)))
+
+# ---- Встроенный пример PNG (docs/img/about.png) для проверки декодера ----
+ABOUT_PNG_C := $(BUILD)/about_png.c
+ABOUT_PNG_O := $(OBJDIR)/about_png.o
+
+$(ABOUT_PNG_C): docs/img/about.png
+	@mkdir -p $(dir $@)
+	@python3 -c 'd=open("docs/img/about.png","rb").read(); print("#include <stddef.h>\n#include <stdint.h>\nconst uint8_t g_sample_about_png[] = {"); [print(",".join(str(b) for b in d[i:i+16])+",") for i in range(0,len(d),16)]; print("};\nconst size_t g_sample_about_png_len = sizeof(g_sample_about_png);")' > $@
+
+$(ABOUT_PNG_O): $(ABOUT_PNG_C) $(CFLAGS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+TOUCH_OBJ += $(ABOUT_PNG_O)
 
 # ---- Прошивки сопроцессоров (Wi-Fi, zap-шейдер GPU) ----
 # Лежат локально, не в репозитории: они подписаны под устройство и сняты с
@@ -640,12 +656,12 @@ bootimg-raw: $(PACKED_RAW)
 # Образ чистый (нулевой) — система сама отформатирует его при первом старте.
 # Лежит рядом со сборкой, а не в build/, чтобы "make clean" не стирал данные.
 DISK      ?= disk.img
-DISK_SIZE_KB ?= 4096
+DISK_SIZE_KB ?= 65536   # 64 МиБ: под большие файлы (хвосты в пуле кластеров)
 # Запятые внутри $(if ...) разделили бы его аргументы — отсюда $(comma).
 comma := ,
 
 disk:
-	@test -f "$(DISK)" || { dd if=/dev/zero of="$(DISK)" bs=1024 count=$(DISK_SIZE_KB) 2>/dev/null && echo "создан образ диска: $(DISK) ($(DISK_SIZE_KB) КиБ)"; }
+	@test -f "$(DISK)" || { dd if=/dev/zero of="$(DISK)" bs=1024 count=0 seek=$(DISK_SIZE_KB) 2>/dev/null && echo "создан образ диска: $(DISK) ($(DISK_SIZE_KB) КиБ)"; }
 
 disk-reset:
 	rm -f "$(DISK)"

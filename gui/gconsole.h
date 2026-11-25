@@ -63,6 +63,9 @@ typedef struct {
     int     shadow_valid;
     int     shadow_x, shadow_y, shadow_cols, shadow_rows, shadow_scale;
     uint8_t shadow_bg;
+
+    void (*capture)(char c, void *ctx);
+    void *capture_ctx;
 } gconsole_t;
 
 void gconsole_init(gconsole_t *gc, const gui_window_t *win, uint8_t fg, uint8_t bg);
@@ -96,5 +99,8 @@ int  gconsole_cols(const gconsole_t *gc);
  * не трогает уже написанный текст. Сбросить к цвету по умолчанию:
  * gconsole_set_ink(gc, gc->fg). */
 void gconsole_set_ink(gconsole_t *gc, uint8_t color);
+
+/* Перенаправление вывода консоли в буфер/обработчик (NULL — обычный вывод). */
+void gconsole_set_capture(gconsole_t *gc, void (*fn)(char c, void *ctx), void *ctx);
 
 #endif

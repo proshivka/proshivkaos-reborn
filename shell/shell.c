@@ -178,9 +178,20 @@ static void cmd_cat(int argc, char *argv[]) {
         return;
     }
 
-    for (size_t i = 0; i < f->size; i++)
-        hal_console_putc((char)f->data[i]);
-    if (f->size == 0 || f->data[f->size - 1] != '\n')
+    uint8_t chunk[256], last = '\n';
+    size_t off = 0;
+    for (;;) {
+        long n = ramfs_read(path, off, chunk, sizeof(chunk));
+        if (n <= 0) break;
+        for (long i = 0; i < n; i++) {
+            uint8_t c = chunk[i];
+            last = c;
+            /* управляющие байты (бинарные файлы) — точкой */
+            hal_console_putc((c < 32 && c != '\n' && c != '\t') || c == 127 ? '.' : (char)c);
+        }
+        off += (size_t)n;
+    }
+    if (f->size == 0 || last != '\n')
         hal_console_putc('\n');
 }
 
@@ -276,6 +287,56 @@ static void print_uint(unsigned v) {
 
 /* Состояние постоянного хранилища: подключился ли диск и сколько операций
  * с ним не удалось. Первое, что стоит посмотреть, если файлы пропадают. */
+static void print_size_human(uint32_t bytes) {
+    if (bytes >= 1024u * 1024u) {
+        print_uint((unsigned)(bytes / (1024u * 1024u)));
+        hal_console_write("M");
+    } else if (bytes >= 1024u) {
+        print_uint((unsigned)(bytes / 1024u));
+        hal_console_write("K");
+    } else {
+        print_uint((unsigned)bytes);
+        hal_console_write("B");
+    }
+}
+
+static void ramfs_walk_stats(const char *dir, size_t *entries, uint32_t *bytes) {
+    const ramfs_file_t *list[RAMFS_MAX_FILES];
+    size_t n = ramfs_list_dir(dir, list, RAMFS_MAX_FILES);
+    for (size_t i = 0; i < n; i++) {
+        (*entries)++;
+        if (list[i]->is_dir) {
+            ramfs_walk_stats(list[i]->path, entries, bytes);
+        } else {
+            *bytes += (uint32_t)list[i]->size;
+        }
+    }
+}
+
+static void cmd_df(void) {
+    uint32_t free_b = 0, total_b = 0;
+    ramfs_space(&free_b, &total_b);
+    size_t used_entries = 1;
+    uint32_t ram_bytes = 0;
+    ramfs_walk_stats("/", &used_entries, &ram_bytes);
+
+    if (total_b > 0) {
+        uint32_t used_b = total_b - free_b;
+        hal_console_write("disk   : total "); print_size_human(total_b);
+        hal_console_write("  used "); print_size_human(used_b);
+        hal_console_write("  free "); print_size_human(free_b);
+        hal_console_putc('\n');
+    } else {
+        hal_console_write("disk   : net (tolko RamFS)\n");
+    }
+    hal_console_write("ramfs  : "); print_size_human(ram_bytes);
+    hal_console_write(" zanyato, "); print_uint((unsigned)used_entries);
+    hal_console_write("/"); print_uint(RAMFS_MAX_ENTRIES);
+    hal_console_write(" zapisey\n");
+    hal_console_write("status : "); hal_console_write(ramfs_persist_state_name());
+    hal_console_putc('\n');
+}
+
 static void cmd_fsinfo(void) {
     hal_console_write("fs     : RamFS + ");
     hal_console_write(ramfs_persist_state_name());
@@ -590,6 +651,7 @@ static void cmd_help(void) {
         "  edit <file>        - polnoekrannyy redaktor\n"
         "                       (^S sohranit, ^Q vyhod, ^F poisk)\n"
         "  neofetch           - info o sisteme\n"
+        "  df                 - svobodnoe mesto na diske\n"
         "  fsinfo             - sostoyanie diska (sohranenie faylov)\n"
         "  help               - eta spravka\n"
         "  ifconfig           - MAC setevoy karty\n"
@@ -618,10 +680,70 @@ static void print_prompt(void) {
 /* Имена команд для Tab. ДЕРЖАТЬ В СИНХРОНЕ с цепочкой else-if в shell_run():
  * добавил команду — добавь её имя сюда. */
 static const char *const COMMANDS[] = {
-    "ls", "cd", "cat", "touch", "edit", "neofetch", "fsinfo", "help",
+    "ls", "cd", "cat", "touch", "edit", "neofetch", "df", "fsinfo", "help",
     "clear", "echo",
     "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
 };
+
+typedef struct {
+    char  *buf;
+    size_t len;
+    size_t cap;
+} shell_redir_t;
+
+static void shell_capture_putc(char c, void *ctx) {
+    shell_redir_t *rc = (shell_redir_t *)ctx;
+    if (rc->len < rc->cap) rc->buf[rc->len++] = c;
+}
+
+static char g_shell_redir_buf[RAMFS_MAX_FILE_SIZE];
+static char g_shell_redir_merge[RAMFS_MAX_FILE_SIZE];
+
+static int split_redirect(char *line, char **out_file, int *append) {
+    for (char *p = line; *p; p++) {
+        if (*p == '>') {
+            int is_app = (p[1] == '>');
+            *p = '\0';
+            char *f = p + (is_app ? 2 : 1);
+            while (*f == ' ') f++;
+            if (!*f) return -1;
+            *out_file = f;
+            char *end = f;
+            while (*end && *end != ' ') end++;
+            *end = '\0';
+            *append = is_app;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void exec_shell_cmd(int argc, char *argv[]) {
+        if (str_eq(argv[0], "ls"))            cmd_ls(argc, argv);
+        else if (str_eq(argv[0], "cd"))       cmd_cd(argc, argv);
+        else if (str_eq(argv[0], "cat"))      cmd_cat(argc, argv);
+        else if (str_eq(argv[0], "touch"))    cmd_touch(argc, argv);
+        else if (str_eq(argv[0], "edit"))     cmd_edit(argc, argv);
+        else if (str_eq(argv[0], "neofetch")) cmd_neofetch();
+        else if (str_eq(argv[0], "df"))       cmd_df();
+        else if (str_eq(argv[0], "fsinfo"))   cmd_fsinfo();
+        else if (str_eq(argv[0], "ifconfig")) cmd_ifconfig();
+        else if (str_eq(argv[0], "arping"))   cmd_arping();
+        else if (str_eq(argv[0], "help"))     cmd_help();
+        else if (str_eq(argv[0], "clear"))    cmd_clear();
+        else if (str_eq(argv[0], "echo"))    cmd_echo(argc, argv);
+        else if (str_eq(argv[0], "ping")) cmd_ping(argc, argv);
+        else if (str_eq(argv[0], "dhcp"))    cmd_dhcp();
+        else if (str_eq(argv[0], "udpsend")) cmd_udpsend(argc, argv);
+        else if (str_eq(argv[0], "nslookup")) cmd_nslookup(argc, argv);
+        else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
+        else if (shell_try_netcmd(argc, argv)) {}
+        else {
+            hal_console_write("neizvestnaya komanda: ");
+            hal_console_write(argv[0]);
+            hal_console_putc('\n');
+        }
+}
 
 /* ---------------- Главный цикл ---------------- */
 
@@ -641,32 +763,56 @@ void shell_run(void) {
                 line_read(line, CMD_BUF_SIZE, print_prompt,
                          COMMANDS, sizeof COMMANDS / sizeof COMMANDS[0]);
 
+        char *redir_file = 0;
+        int append = 0;
+        int has_redir = split_redirect(line, &redir_file, &append);
+        if (has_redir < 0) {
+            hal_console_write("oshibka sintaksisa: ukazhite fayl posle >\n");
+            continue;
+        }
+
         int argc = tokenize(line, argv, CMD_MAX_ARGS);
         if (argc == 0)
             continue;
 
-        if (str_eq(argv[0], "ls"))            cmd_ls(argc, argv);
-        else if (str_eq(argv[0], "cd"))       cmd_cd(argc, argv);
-        else if (str_eq(argv[0], "cat"))      cmd_cat(argc, argv);
-        else if (str_eq(argv[0], "touch"))    cmd_touch(argc, argv);
-        else if (str_eq(argv[0], "edit"))     cmd_edit(argc, argv);
-        else if (str_eq(argv[0], "neofetch")) cmd_neofetch();
-        else if (str_eq(argv[0], "fsinfo"))   cmd_fsinfo();
-        else if (str_eq(argv[0], "ifconfig")) cmd_ifconfig();
-        else if (str_eq(argv[0], "arping"))   cmd_arping();
-        else if (str_eq(argv[0], "help"))     cmd_help();
-        else if (str_eq(argv[0], "clear"))    cmd_clear();
-        else if (str_eq(argv[0], "echo"))    cmd_echo(argc, argv);
-        else if (str_eq(argv[0], "ping")) cmd_ping(argc, argv);
-        else if (str_eq(argv[0], "dhcp"))    cmd_dhcp();
-        else if (str_eq(argv[0], "udpsend")) cmd_udpsend(argc, argv);
-        else if (str_eq(argv[0], "nslookup")) cmd_nslookup(argc, argv);
-        else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
-        else if (shell_try_netcmd(argc, argv)) {}
-        else {
-            hal_console_write("neizvestnaya komanda: ");
-            hal_console_write(argv[0]);
-            hal_console_putc('\n');
+        if (has_redir == 0) {
+            exec_shell_cmd(argc, argv);
+            continue;
         }
+
+        char redir_path[RAMFS_MAX_PATH_LEN];
+        path_resolve(redir_file, redir_path, sizeof(redir_path));
+
+        shell_redir_t cap = { g_shell_redir_buf, 0, sizeof(g_shell_redir_buf) };
+        hal_console_set_capture(shell_capture_putc, &cap);
+        exec_shell_cmd(argc, argv);
+        hal_console_set_capture(0, 0);
+
+        if (ramfs_is_dir(redir_path)) {
+            hal_console_write("oshibka: eto direktoriya\n");
+            continue;
+        }
+
+        int wr = -1;
+        if (append) {
+            size_t cur_len = 0;
+            if (ramfs_lookup(redir_path)) {
+                long r = ramfs_read(redir_path, 0, g_shell_redir_merge, sizeof(g_shell_redir_merge));
+                if (r > 0) cur_len = (size_t)r;
+            } else {
+                ramfs_touch(redir_path);
+            }
+            size_t copy_len = cap.len;
+            if (cur_len + copy_len > sizeof(g_shell_redir_merge))
+                copy_len = sizeof(g_shell_redir_merge) - cur_len;
+            for (size_t i = 0; i < copy_len; i++)
+                g_shell_redir_merge[cur_len + i] = cap.buf[i];
+            wr = ramfs_write(redir_path, g_shell_redir_merge, cur_len + copy_len);
+        } else {
+            ramfs_touch(redir_path);
+            wr = ramfs_write(redir_path, cap.buf, cap.len);
+        }
+        if (wr != 0)
+            hal_console_write("oshibka zapisi v fayl\n");
     }
 }

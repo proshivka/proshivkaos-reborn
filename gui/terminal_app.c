@@ -141,7 +141,74 @@ static void write_padded(gconsole_t *gc, unsigned int v, int width) {
     for (int i = n - 1; i >= 0; i--) gconsole_putc(gc, buf[i]);
 }
 
-static void run_command(terminal_app_t *app, char *line) {
+static void write_uint(gconsole_t *gc, uint32_t v) {
+    write_padded(gc, (unsigned int)v, 1);
+}
+
+static void write_size_human(gconsole_t *gc, uint32_t bytes) {
+    if (bytes >= 1024u * 1024u) {
+        write_uint(gc, bytes / (1024u * 1024u));
+        gconsole_write(gc, "M");
+    } else if (bytes >= 1024u) {
+        write_uint(gc, bytes / 1024u);
+        gconsole_write(gc, "K");
+    } else {
+        write_uint(gc, bytes);
+        gconsole_write(gc, "B");
+    }
+}
+
+static void ramfs_walk_stats(const char *dir, size_t *entries, uint32_t *bytes) {
+    const ramfs_file_t *list[RAMFS_MAX_ENTRIES];
+    size_t n = ramfs_list_dir(dir, list, RAMFS_MAX_ENTRIES);
+    for (size_t i = 0; i < n; i++) {
+        (*entries)++;
+        if (list[i]->is_dir) {
+            ramfs_walk_stats(list[i]->path, entries, bytes);
+        } else {
+            *bytes += (uint32_t)list[i]->size;
+        }
+    }
+}
+
+typedef struct {
+    char  *buf;
+    size_t len;
+    size_t cap;
+} redir_cap_t;
+
+static void redir_capture_putc(char c, void *ctx) {
+    redir_cap_t *rc = (redir_cap_t *)ctx;
+    if (rc->len < rc->cap) rc->buf[rc->len++] = c;
+}
+
+static char g_redir_buf[RAMFS_MAX_FILE_SIZE];
+static char g_redir_merge[RAMFS_MAX_FILE_SIZE];
+
+/* Ищет '>' или '>>' в строке команды. Возвращает:
+ *   0 — перенаправления нет
+ *   1 — найдено ('*' out_file, '*' append), строка обрезана на месте '>'
+ *  -1 — синтаксическая ошибка (после '>' не указан файл) */
+static int split_redirect(char *line, char **out_file, int *append) {
+    for (char *p = line; *p; p++) {
+        if (*p == '>') {
+            int is_app = (p[1] == '>');
+            *p = '\0';
+            char *f = p + (is_app ? 2 : 1);
+            while (*f == ' ') f++;
+            if (!*f) return -1;
+            *out_file = f;
+            char *end = f;
+            while (*end && *end != ' ') end++;
+            *end = '\0';
+            *append = is_app;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void exec_command(terminal_app_t *app, char *line) {
     char *argv[TERM_MAX_ARGS];
     int argc = tokenize(line, argv, TERM_MAX_ARGS);
     if (argc == 0) return;
@@ -186,8 +253,19 @@ static void run_command(terminal_app_t *app, char *line) {
         const ramfs_file_t *f = ramfs_lookup(path);
         if (!f || f->is_dir) { print_error(app, "not found"); return; }
         gconsole_putc(&app->console, '\n');
-        for (size_t i = 0; i < f->size; i++)
-            gconsole_putc(&app->console, (char)f->data[i]);
+        uint8_t chunk[256];
+        size_t off = 0;
+        for (;;) {
+            long n = ramfs_read(path, off, chunk, sizeof(chunk));
+            if (n <= 0) break;
+            for (long i = 0; i < n; i++) {
+                uint8_t c = chunk[i];
+                /* управляющие байты (бинарные файлы) — точкой, не в консоль */
+                gconsole_putc(&app->console,
+                              (c < 32 && c != '\n' && c != '\t') || c == 127 ? '.' : (char)c);
+            }
+            off += (size_t)n;
+        }
 
     } else if (str_eq(argv[0], "touch")) {
         if (argc < 2) { print_error(app, "usage: touch <file>"); return; }
@@ -249,6 +327,41 @@ static void run_command(terminal_app_t *app, char *line) {
         gconsole_write(&app->console, "\nFS  : RAMFS + ");
         gconsole_write(&app->console, ramfs_persist_state_name());
 
+    } else if (str_eq(argv[0], "echo")) {
+        gconsole_putc(&app->console, '\n');
+        for (int i = 1; i < argc; i++) {
+            if (i > 1) gconsole_putc(&app->console, ' ');
+            gconsole_write(&app->console, argv[i]);
+        }
+
+    } else if (str_eq(argv[0], "df")) {
+        uint32_t free_b = 0, total_b = 0;
+        ramfs_space(&free_b, &total_b);
+        size_t used_entries = 1; /* корень "/" */
+        uint32_t ram_bytes = 0;
+        ramfs_walk_stats("/", &used_entries, &ram_bytes);
+
+        if (total_b > 0) {
+            uint32_t used_b = total_b - free_b;
+            gconsole_write(&app->console, "\nDISK  : TOTAL ");
+            write_size_human(&app->console, total_b);
+            gconsole_write(&app->console, "  USED ");
+            write_size_human(&app->console, used_b);
+            gconsole_write(&app->console, "  FREE ");
+            write_size_human(&app->console, free_b);
+        } else {
+            gconsole_write(&app->console, "\nDISK  : NONE (RAMFS ONLY)");
+        }
+        gconsole_write(&app->console, "\nRAMFS : ");
+        write_size_human(&app->console, ram_bytes);
+        gconsole_write(&app->console, " USED, ");
+        write_uint(&app->console, (uint32_t)used_entries);
+        gconsole_write(&app->console, "/");
+        write_uint(&app->console, RAMFS_MAX_ENTRIES);
+        gconsole_write(&app->console, " ENTRIES");
+        gconsole_write(&app->console, "\nSTATE : ");
+        gconsole_write(&app->console, ramfs_persist_state_name());
+
     } else if (str_eq(argv[0], "fsinfo")) {
         gconsole_write(&app->console, "\nRAMFS + ");
         gconsole_write(&app->console, ramfs_persist_state_name());
@@ -258,8 +371,8 @@ static void run_command(terminal_app_t *app, char *line) {
         }
 
     } else if (str_eq(argv[0], "help")) {
-        gconsole_write(&app->console, "\nLS CD PWD MKDIR CAT TOUCH EDIT");
-        gconsole_write(&app->console, "\nCLEAR DATE UPTIME NEOFETCH FSINFO HELP");
+        gconsole_write(&app->console, "\nLS CD PWD MKDIR CAT TOUCH EDIT ECHO");
+        gconsole_write(&app->console, "\nCLEAR DATE UPTIME NEOFETCH DF FSINFO HELP");
         if (ext_help) {
             gconsole_putc(&app->console, '\n');
             gconsole_write(&app->console, ext_help);
@@ -271,6 +384,64 @@ static void run_command(terminal_app_t *app, char *line) {
     } else {
         print_error(app, "unknown command");
     }
+}
+
+static void run_command(terminal_app_t *app, char *line) {
+    char *redir_file = 0;
+    int append = 0;
+    int has_redir = split_redirect(line, &redir_file, &append);
+    if (has_redir < 0) {
+        print_error(app, "syntax error: expected file after >");
+        return;
+    }
+    if (has_redir == 0) {
+        exec_command(app, line);
+        return;
+    }
+
+    char redir_path[RAMFS_MAX_PATH_LEN];
+    resolve_path(app, redir_file, redir_path, sizeof(redir_path));
+
+    redir_cap_t cap = { g_redir_buf, 0, sizeof(g_redir_buf) };
+    gconsole_set_capture(&app->console, redir_capture_putc, &cap);
+    exec_command(app, line);
+    gconsole_set_capture(&app->console, 0, 0);
+
+    size_t start = 0;
+    if (cap.len > 0 && cap.buf[0] == '\n') start = 1;
+    size_t out_len = cap.len - start;
+    if (out_len > 0 && cap.buf[start + out_len - 1] != '\n' && cap.len < cap.cap) {
+        cap.buf[start + out_len] = '\n';
+        out_len++;
+    }
+
+    if (ramfs_is_dir(redir_path)) {
+        print_error(app, "is a directory");
+        return;
+    }
+
+    int wr = -1;
+    if (append) {
+        size_t cur_len = 0;
+        const ramfs_file_t *ef = ramfs_lookup(redir_path);
+        if (ef) {
+            long r = ramfs_read(redir_path, 0, g_redir_merge, sizeof(g_redir_merge));
+            if (r > 0) cur_len = (size_t)r;
+        } else {
+            ramfs_touch(redir_path);
+        }
+        size_t copy_len = out_len;
+        if (cur_len + copy_len > sizeof(g_redir_merge))
+            copy_len = sizeof(g_redir_merge) - cur_len;
+        for (size_t i = 0; i < copy_len; i++)
+            g_redir_merge[cur_len + i] = cap.buf[start + i];
+        wr = ramfs_write(redir_path, g_redir_merge, cur_len + copy_len);
+    } else {
+        ramfs_touch(redir_path);
+        wr = ramfs_write(redir_path, cap.buf + start, out_len);
+    }
+
+    if (wr != 0) print_error(app, "write failed");
 }
 
 void terminal_app_init(terminal_app_t *app, const gui_window_t *win) {

@@ -29,7 +29,14 @@ void gconsole_init(gconsole_t *gc, const gui_window_t *win, uint8_t fg, uint8_t 
     gc->rect_x = gc->rect_y = gc->rect_w = gc->rect_h = 0;
     gc->scale = 1;
     gc->shadow_valid = 0;
+    gc->capture = 0;
+    gc->capture_ctx = 0;
     gconsole_clear(gc);
+}
+
+void gconsole_set_capture(gconsole_t *gc, void (*fn)(char c, void *ctx), void *ctx) {
+    gc->capture = fn;
+    gc->capture_ctx = ctx;
 }
 
 void gconsole_set_rect(gconsole_t *gc, int x, int y, int w, int h) {
@@ -69,9 +76,18 @@ void gconsole_clear(gconsole_t *gc) {
 }
 
 void gconsole_set_colors(gconsole_t *gc, uint8_t fg, uint8_t bg) {
+    uint8_t old_fg = gc->fg;
+    if (old_fg != fg) {
+        for (int i = 0; i < gc->line_count; i++)
+            for (int j = 0; j < gc->line_len[i]; j++)
+                if (gc->color[i][j] == old_fg)
+                    gc->color[i][j] = fg;
+    }
     gc->fg = fg;
     gc->bg = bg;
-    gc->ink = fg;
+    if (gc->ink == old_fg)
+        gc->ink = fg;
+    gc->shadow_valid = 0;
 }
 
 void gconsole_set_ink(gconsole_t *gc, uint8_t color) {
@@ -105,6 +121,10 @@ void gconsole_putcp(gconsole_t *gc, uint32_t cp) {
  * заменитель (рисуется как "?"), а байт, который её оборвал, разбирается
  * заново — так мусор в выводе не съедает следующий нормальный символ. */
 void gconsole_putc(gconsole_t *gc, char c) {
+    if (gc->capture) {
+        gc->capture(c, gc->capture_ctx);
+        return;
+    }
     unsigned char b = (unsigned char)c;
 
     if (gc->u8_left) {
