@@ -1,8 +1,8 @@
-/* gui/touch/app_image.c — просмотрщик изображений PNG для тач-оболочки.
+/* gui/touch/app_image.c — просмотрщик PNG/GIF для тач-оболочки.
  *
  * Работает в двух режимах:
- *   - MODE_LIST: показывает все .png файлы из RamFS (при запуске с рабочего стола).
- *   - MODE_VIEW: декодирует PNG через gui/png.c и отображает с масштабированием
+ *   - MODE_LIST: показывает PNG и GIF из RamFS (при запуске с рабочего стола).
+ *   - MODE_VIEW: декодирует PNG/GIF и отображает с масштабированием
  *                (FIT / 1:1 / зум 25%..400%), панорамированием пальцем и
  *                переключением фона для прозрачных изображений.
  *
@@ -16,6 +16,8 @@
 #include "hal_input.h"
 #include "ramfs.h"
 #include "png.h"
+#include "gif.h"
+#include "hal_time.h"
 
 #define MODE_LIST 0
 #define MODE_VIEW 1
@@ -24,19 +26,31 @@
 #define BG_DARK    1
 #define BG_LIGHT   2
 
-#define PNG_MAX_FILE_BYTES (1024u * 1024u)
+#define IMAGE_MAX_FILE_BYTES RAMFS_MAX_BIG_SIZE
+#define IMAGE_KIND_PNG 1
+#define IMAGE_KIND_GIF 2
 
 extern const uint8_t g_sample_about_png[];
 extern const size_t  g_sample_about_png_len;
+extern const uint8_t g_sample_ineffa_gif[];
+extern const size_t  g_sample_ineffa_gif_len;
+extern const uint8_t g_sample_dr_gif[];
+extern const size_t  g_sample_dr_gif_len;
 
-static uint8_t  g_file_buf[PNG_MAX_FILE_BYTES];
+static uint8_t  g_file_buf[IMAGE_MAX_FILE_BYTES];
+static uint32_t g_gif_restore[GIF_MAX_PIXELS];
+static gif_decoder_t g_gif;
+static gif_info_t g_gif_info;
+static uint64_t g_gif_next_frame_ms;
+static int g_gif_playing = 0;
+static int g_image_kind = IMAGE_KIND_PNG;
 static uint32_t g_img_pixels[PNG_MAX_WIDTH * PNG_MAX_HEIGHT];
 
 static int g_x, g_y, g_w, g_h;
 static int g_mode = MODE_LIST;
 static int g_from_files = 0;
 
-/* Состояние списка PNG */
+/* Состояние списка изображений */
 static const ramfs_file_t *g_png_list[RAMFS_MAX_ENTRIES];
 static int g_png_count = 0;
 static int g_list_scroll = 0;
@@ -85,15 +99,22 @@ static const char *base_name(const char *path) {
     return name;
 }
 
-static int ends_with_png(const char *name) {
-    int n = 0;
+static int ends_with_ext(const char *name, const char *ext) {
+    int n = 0, e = 0;
     while (name[n]) n++;
-    if (n < 4) return 0;
-    char a = name[n - 4], b = name[n - 3], c = name[n - 2], d = name[n - 1];
-    if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
-    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    if (d >= 'A' && d <= 'Z') d += 'a' - 'A';
-    return a == '.' && b == 'p' && c == 'n' && d == 'g';
+    while (ext[e]) e++;
+    if (n < e) return 0;
+    for (int i = 0; i < e; i++) {
+        char a = name[n - e + i], b = ext[i];
+        if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+        if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static int has_supported_image_extension(const char *name) {
+    return ends_with_ext(name, ".png") || ends_with_ext(name, ".gif");
 }
 
 static void collect_pngs_dir(const char *dir) {
@@ -102,8 +123,9 @@ static void collect_pngs_dir(const char *dir) {
     for (int i = 0; i < n; i++) {
         if (entries[i]->is_dir) {
             collect_pngs_dir(entries[i]->path);
-        } else if (ends_with_png(entries[i]->name) ||
-                   png_is_png(entries[i]->data, ramfs_inline_len(entries[i]))) {
+        } else if (has_supported_image_extension(entries[i]->name) ||
+                   png_is_png(entries[i]->data, ramfs_inline_len(entries[i])) ||
+                   gif_is_gif(entries[i]->data, ramfs_inline_len(entries[i]))) {
             if (g_png_count < RAMFS_MAX_ENTRIES)
                 g_png_list[g_png_count++] = entries[i];
         }
@@ -113,24 +135,30 @@ static void collect_pngs_dir(const char *dir) {
 static void refresh_png_list(void) {
     g_png_count = 0;
     collect_pngs_dir("/");
-    int total_rows = 1 + g_png_count; /* 0 = встроенный about.png */
+    int total_rows = 3 + g_png_count; /* 0 = about.png, 1 = пример GIF */
     int max_scroll = total_rows * TM.touch - (g_h - TM.touch);
     if (max_scroll < 0) max_scroll = 0;
     if (g_list_scroll > max_scroll) g_list_scroll = max_scroll;
     if (g_list_scroll < 0) g_list_scroll = 0;
 }
 
-/* ---------------- Загрузка и декодирование PNG ---------------- */
+/* ---------------- Загрузка и декодирование изображений ---------------- */
 
-static void decode_png_buf(const uint8_t *buf, size_t len, const char *path) {
+static void reset_image_view(const char *path) {
     str_copy(g_path, path, sizeof(g_path));
     g_has_image = 0;
-    g_err_msg   = 0;
-    g_zoom_fit  = 1;
-    g_zoom_pct  = 100;
-    g_pan_x     = 0;
-    g_pan_y     = 0;
+    g_err_msg = 0;
+    g_gif_playing = 0;
+    g_gif_next_frame_ms = 0;
+    g_zoom_fit = 1;
+    g_zoom_pct = 100;
+    g_pan_x = 0;
+    g_pan_y = 0;
+}
 
+static void decode_png_buf(const uint8_t *buf, size_t len, const char *path) {
+    reset_image_view(path);
+    g_image_kind = IMAGE_KIND_PNG;
     int err = png_decode(buf, len, g_img_pixels,
                          PNG_MAX_WIDTH, PNG_MAX_HEIGHT, &g_info);
     if (err != PNG_OK) {
@@ -140,14 +168,37 @@ static void decode_png_buf(const uint8_t *buf, size_t len, const char *path) {
     g_has_image = 1;
 }
 
-static void load_png(const char *path) {
-    str_copy(g_path, path, sizeof(g_path));
-    g_has_image = 0;
-    g_err_msg   = 0;
-    g_zoom_fit  = 1;
-    g_zoom_pct  = 100;
-    g_pan_x     = 0;
-    g_pan_y     = 0;
+static void decode_gif_buf(const uint8_t *buf, size_t len, const char *path) {
+    reset_image_view(path);
+    g_image_kind = IMAGE_KIND_GIF;
+
+    int err = gif_decoder_open(&g_gif, buf, len, g_img_pixels,
+                               GIF_MAX_WIDTH, GIF_MAX_HEIGHT,
+                               g_gif_restore, GIF_MAX_PIXELS, &g_gif_info);
+    if (err != GIF_DONE) {
+        g_err_msg = gif_strerror(err);
+        return;
+    }
+
+    err = gif_decoder_next(&g_gif, &g_gif_info);
+    if (err != GIF_FRAME) {
+        g_err_msg = err == GIF_DONE ? "EMPTY GIF" : gif_strerror(err);
+        return;
+    }
+
+    g_info.width = g_gif_info.width;
+    g_info.height = g_gif_info.height;
+    g_info.bit_depth = 8;
+    g_info.color_type = PNG_COLOR_RGBA;
+    g_info.interlace = 0;
+    g_info.has_alpha = g_gif_info.has_transparency;
+    g_has_image = 1;
+    g_gif_playing = 1;
+    g_gif_next_frame_ms = hal_time_ms() + g_gif_info.delay_ms;
+}
+
+static void load_image(const char *path) {
+    reset_image_view(path);
 
     const ramfs_file_t *f = ramfs_lookup(path);
     if (!f || f->is_dir) {
@@ -158,8 +209,8 @@ static void load_png(const char *path) {
         g_err_msg = "EMPTY FILE";
         return;
     }
-    if (f->size > PNG_MAX_FILE_BYTES) {
-        g_err_msg = "FILE TOO LARGE (>1MB)";
+    if (f->size > IMAGE_MAX_FILE_BYTES) {
+        g_err_msg = "FILE TOO LARGE (>4MB)";
         return;
     }
 
@@ -173,14 +224,21 @@ static void load_png(const char *path) {
         got += (size_t)r;
     }
 
-    decode_png_buf(g_file_buf, got, path);
+    if (png_is_png(g_file_buf, got))
+        decode_png_buf(g_file_buf, got, path);
+    else if (gif_is_gif(g_file_buf, got))
+        decode_gif_buf(g_file_buf, got, path);
+    else {
+        g_err_msg = "UNSUPPORTED IMAGE FORMAT";
+        g_has_image = 0;
+    }
 }
 
 void app_image_open(const char *path, int from_files) {
     g_from_files = from_files;
     g_mode = MODE_VIEW;
-    load_png(path);
-    touch_ui_open("IMAGE");
+    load_image(path);
+    touch_ui_open("Image Viewer");
 }
 
 /* ---------------- Геометрия интерфейса ---------------- */
@@ -294,12 +352,12 @@ static void draw_header(const char *title, int show_fit_btn) {
 
 static void render_list(void) {
     hal_gfx_fill_rect(g_x, g_y, g_w, g_h, GFX_UI_BG);
-    draw_header("PNG VIEWER", 0);
+    draw_header("Image Viewer", 0);
 
     int area_y = g_y + header_h();
     int area_h = g_h - header_h();
 
-    int total_rows = 1 + g_png_count;
+    int total_rows = 3 + g_png_count;
     int row_h = TM.touch;
     hal_gfx_set_clip(g_x, area_y, g_w, area_h);
     for (int i = 0; i < total_rows; i++) {
@@ -309,8 +367,15 @@ static void render_list(void) {
         if (g_pressed_row == i)
             hal_gfx_fill_rect(g_x, ry, g_w, row_h, GFX_UI_SURFACE_2);
 
-        const char *name = (i == 0) ? "about.png" : g_png_list[i - 1]->name;
-        size_t      fsize = (i == 0) ? g_sample_about_png_len : g_png_list[i - 1]->size;
+        const char *name = i == 0 ? "about.png"
+                         : i == 1 ? "ineffa-toaster.gif"
+                         : i == 2 ? "dr.gif"
+                         : g_png_list[i - 3]->name;
+
+        size_t fsize = i == 0 ? g_sample_about_png_len
+                    : i == 1 ? g_sample_ineffa_gif_len
+                    : i == 2 ? g_sample_dr_gif_len
+                    : g_png_list[i - 3]->size;
 
         int m = TM.touch / 2;
         int mx = g_x + TM.pad * 2;
@@ -450,7 +515,7 @@ static void render_view(void) {
     p = touch_strcat(info, p, sizeof(info), "x");
     p = touch_strcat(info, p, sizeof(info), touch_itoa((int)g_info.height, num, 0));
     p = touch_strcat(info, p, sizeof(info), " ");
-    p = touch_strcat(info, p, sizeof(info), png_color_name(g_info.color_type));
+    p = touch_strcat(info, p, sizeof(info), g_image_kind == IMAGE_KIND_GIF ? "GIF" : png_color_name(g_info.color_type));
     if (!g_zoom_fit) {
         p = touch_strcat(info, p, sizeof(info), " ");
         p = touch_strcat(info, p, sizeof(info), touch_itoa(g_zoom_pct, num, 0));
@@ -531,7 +596,7 @@ static void image_on_touch(int type, int x, int y) {
             if (g_drag_dist > TM.touch / 3) {
                 g_pressed_row = -1;
                 g_list_scroll = g_drag_scroll0 - (y - g_drag_y0);
-                int max_scroll = (1 + g_png_count) * TM.touch - (g_h - header_h());
+                int max_scroll = (2 + g_png_count) * TM.touch - (g_h - header_h());
                 if (max_scroll < 0) max_scroll = 0;
                 if (g_list_scroll > max_scroll) g_list_scroll = max_scroll;
                 if (g_list_scroll < 0) g_list_scroll = 0;
@@ -550,10 +615,22 @@ static void image_on_touch(int type, int x, int y) {
             g_from_files = 0;
             g_mode = MODE_VIEW;
             decode_png_buf(g_sample_about_png, g_sample_about_png_len, "/about.png");
-        } else if (row >= 1 && row <= g_png_count) {
+        } else if (row == 1) {
             g_from_files = 0;
             g_mode = MODE_VIEW;
-            load_png(g_png_list[row - 1]->path);
+            decode_gif_buf(g_sample_ineffa_gif,
+                           g_sample_ineffa_gif_len,
+                           "/ineffa-toaster.gif");
+        } else if (row == 2) {
+            g_from_files = 0;
+            g_mode = MODE_VIEW;
+            decode_gif_buf(g_sample_dr_gif,
+                           g_sample_dr_gif_len,
+                           "/dr.gif");
+        } else if (row >= 3 && row < 3 + g_png_count) {
+            g_from_files = 0;
+            g_mode = MODE_VIEW;
+            load_image(g_png_list[row - 3]->path);
         }
         return;
     }
@@ -623,11 +700,30 @@ static void image_on_key(int key) {
     }
 }
 
+static int image_tick(void) {
+    if (g_mode != MODE_VIEW || !g_has_image || !g_gif_playing) return 0;
+    uint64_t now = hal_time_ms();
+    if (now < g_gif_next_frame_ms) return 0;
+
+    int rc = gif_decoder_next(&g_gif, &g_gif_info);
+    if (rc == GIF_FRAME) {
+        g_info.width = g_gif_info.width;
+        g_info.height = g_gif_info.height;
+        g_info.has_alpha = g_gif_info.has_transparency;
+        g_gif_next_frame_ms = now + g_gif_info.delay_ms;
+        return 1;
+    }
+
+    g_gif_playing = 0;
+    if (rc < 0) g_err_msg = gif_strerror(rc);
+    return rc < 0;
+}
+
 static int image_wants_keyboard(void) { return 0; }
 
 const touch_app_t app_image = {
-    .name   = "IMAGE",
-    .glyph  = "PNG",
+    .name   = "Image Viewer",
+    .glyph  = "GIF",
     .icon   = 0,
     .color  = GFX_UI_ACCENT2,
     .color2 = GFX_UI_ACCENT2_DARK,
@@ -636,5 +732,6 @@ const touch_app_t app_image = {
     .render = image_render,
     .on_touch = image_on_touch,
     .on_key = image_on_key,
-    .wants_keyboard = image_wants_keyboard
+    .wants_keyboard = image_wants_keyboard,
+    .tick = image_tick
 };

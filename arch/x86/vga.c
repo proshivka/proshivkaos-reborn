@@ -22,25 +22,23 @@ static size_t vga_row = 0;
 static size_t vga_col = 0;
 static uint8_t vga_current_color = VGA_DEFAULT_COLOR;
 
-/* Состояние декодера UTF-8. hal_console_putc() передаёт байты по одному,
- * поэтому декодирование должно переживать границы отдельных вызовов. */
+/* hal_console_putc передаёт UTF-8 по одному байту за вызов. */
 static uint32_t utf8_codepoint;
 static uint32_t utf8_min_codepoint;
 static uint8_t utf8_remaining;
 
-static void vga_scroll(void);
 static void vga_update_hw_cursor(void);
+static void vga_scroll(void);
 
 static inline uint16_t vga_entry(uint8_t c, uint8_t color) {
     return (uint16_t)c | ((uint16_t)color << 8);
 }
 
-/* Индексные порты VGA: регистры секвенсора и графического контроллера. */
 #define VGA_SEQ_INDEX 0x3C4
 #define VGA_SEQ_DATA  0x3C5
 #define VGA_GC_INDEX  0x3CE
 #define VGA_GC_DATA   0x3CF
-#define VGA_FONT_MEMORY ((volatile uint8_t *)0xA0000)
+#define VGA_FONT_MEM  ((volatile uint8_t *)0xA0000)
 
 static uint8_t vga_read_seq(uint8_t index) {
     outb(VGA_SEQ_INDEX, index);
@@ -62,10 +60,8 @@ static void vga_write_gc(uint8_t index, uint8_t value) {
     outb(VGA_GC_DATA, value);
 }
 
-/* Загружаем 256 знаков в плоскость 2 VGA. В текстовом режиме на один знак
- * отведено 32 байта, хотя наш шрифт использует только первые 16 (8x16).
- * После записи обе аппаратные таблицы символов направляются на банк 0,
- * чтобы байты 0x80..0xFF тоже индексировали нашу единую таблицу. */
+/* Загрузка 256 глифов в plane 2 VGA. Текстовый режим выделяет 32 байта
+ * на знак; шрифт 8x16 занимает первые 16 байт каждого слота. */
 static void vga_load_font(void) {
     uint8_t old_seq0 = vga_read_seq(0);
     uint8_t old_seq2 = vga_read_seq(2);
@@ -74,61 +70,45 @@ static void vga_load_font(void) {
     uint8_t old_gc5 = vga_read_gc(5);
     uint8_t old_gc6 = vga_read_gc(6);
 
-    /* Остановить секвенсор и открыть плоскость 2 по адресу A0000. */
-    vga_write_seq(0, 0x01);
-    vga_write_seq(2, 0x04); /* разрешена запись только в plane 2 */
-    vga_write_seq(4, 0x07); /* последовательная адресация, без chain-4 */
-    vga_write_gc(4, 0x02);  /* читать plane 2 */
+    vga_write_seq(0, 0x01); /* reset */
+    vga_write_seq(2, 0x04); /* только plane 2 */
+    vga_write_seq(4, 0x07); /* sequential, chain-4 off */
+    vga_write_gc(4, 0x02);  /* read plane 2 */
     vga_write_gc(5, 0x00);  /* write mode 0 */
-    vga_write_gc(6, 0x04);  /* окно памяти A0000..AFFFF */
+    vga_write_gc(6, 0x04);  /* A0000..AFFFF */
 
     for (unsigned glyph = 0; glyph < 256; glyph++) {
-        volatile uint8_t *dst = VGA_FONT_MEMORY + glyph * 32u;
-        for (unsigned row = 0; row < 16; row++)
-            dst[row] = g_vga_font[glyph][row];
-        for (unsigned row = 16; row < 32; row++)
-            dst[row] = 0;
+        volatile uint8_t *dst = VGA_FONT_MEM + glyph * 32u;
+        for (unsigned row = 0; row < 16; row++) dst[row] = g_vga_font[glyph][row];
+        for (unsigned row = 16; row < 32; row++) dst[row] = 0;
     }
 
-    /* Вернуть режим доступа к памяти, не меняя установленный видеорежим. */
     vga_write_gc(6, old_gc6);
     vga_write_gc(5, old_gc5);
     vga_write_gc(4, old_gc4);
     vga_write_seq(4, old_seq4);
     vga_write_seq(2, old_seq2);
-
-    /* Банк A и банк B указывают на начало загруженной таблицы. */
+    /* Обе таблицы символов должны ссылаться на загруженный банк 0. */
     vga_write_seq(3, 0x00);
     vga_write_seq(0, old_seq0);
 }
 
-/* Таблица из tools/fontvga.py отсортирована по Unicode, поэтому поиск
- * выполняется двоичным поиском и не требует отдельной большой таблицы. */
 static uint8_t vga_glyph_for_codepoint(uint32_t cp) {
-    unsigned lo = 0;
-    unsigned hi = g_vga_glyph_map_len;
-
+    unsigned lo = 0, hi = g_vga_glyph_map_len;
     while (lo < hi) {
         unsigned mid = lo + (hi - lo) / 2;
-        uint16_t candidate = g_vga_glyph_map[mid].cp;
-        if (candidate < cp) lo = mid + 1;
+        if (g_vga_glyph_map[mid].cp < cp) lo = mid + 1;
         else hi = mid;
     }
-
     if (lo < g_vga_glyph_map_len && g_vga_glyph_map[lo].cp == cp)
         return g_vga_glyph_map[lo].slot;
     return (uint8_t)'?';
 }
 
-static void vga_newline(void) {
-    vga_col = 0;
-    vga_row++;
-}
-
-/* Записать уже декодированный символ в текстовую видеопамять. */
 static void vga_put_glyph(uint32_t cp) {
     if (cp == '\n') {
-        vga_newline();
+        vga_col = 0;
+        vga_row++;
     } else if (cp == '\r') {
         vga_col = 0;
     } else if (cp == '\b') {
@@ -138,59 +118,40 @@ static void vga_put_glyph(uint32_t cp) {
         }
         if (vga_col > 0) {
             vga_col--;
-            VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] =
-                vga_entry(' ', vga_current_color);
+            VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] = vga_entry(' ', vga_current_color);
         }
     } else if (cp == '\t') {
         unsigned spaces = 8u - (unsigned)(vga_col & 7u);
         while (spaces--) {
-            VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] =
-                vga_entry(' ', vga_current_color);
+            VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] = vga_entry(' ', vga_current_color);
             vga_col++;
-            if (vga_col >= VGA_WIDTH) {
-                vga_col = 0;
-                vga_row++;
-            }
-            if (vga_row >= VGA_HEIGHT)
-                vga_scroll();
+            if (vga_col >= VGA_WIDTH) { vga_col = 0; vga_row++; }
+            if (vga_row >= VGA_HEIGHT) vga_scroll();
         }
     } else if (cp >= 0x20 && cp != 0x7F) {
         uint8_t slot = vga_glyph_for_codepoint(cp);
-        VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] =
-            vga_entry(slot, vga_current_color);
+        VGA_MEMORY[vga_row * VGA_WIDTH + vga_col] = vga_entry(slot, vga_current_color);
         vga_col++;
-        if (vga_col >= VGA_WIDTH) {
-            vga_col = 0;
-            vga_row++;
-        }
+        if (vga_col >= VGA_WIDTH) { vga_col = 0; vga_row++; }
     }
 
-    if (vga_row >= VGA_HEIGHT)
-        vga_scroll();
+    if (vga_row >= VGA_HEIGHT) vga_scroll();
     vga_update_hw_cursor();
 }
 
-/* Декодер UTF-8 с заменой неподдерживаемых/повреждённых последовательностей
- * на '?'. Шрифт хранит BMP-символы, поэтому корректные символы вне BMP также
- * отображаются заменой. */
 static void vga_put_utf8_byte(uint8_t byte) {
 again:
     if (utf8_remaining) {
         if ((byte & 0xC0u) == 0x80u) {
             utf8_codepoint = (utf8_codepoint << 6) | (byte & 0x3Fu);
-            utf8_remaining--;
-            if (utf8_remaining == 0) {
+            if (--utf8_remaining == 0) {
                 uint32_t cp = utf8_codepoint;
                 if (cp < utf8_min_codepoint || cp > 0x10FFFFu ||
-                    (cp >= 0xD800u && cp <= 0xDFFFu))
-                    cp = '?';
+                    (cp >= 0xD800u && cp <= 0xDFFFu)) cp = '?';
                 vga_put_glyph(cp);
             }
             return;
         }
-
-        /* Прерванная последовательность: показать замену и разобрать этот
-         * байт заново — он может быть началом следующего символа. */
         utf8_remaining = 0;
         utf8_codepoint = 0;
         utf8_min_codepoint = 0;
@@ -248,8 +209,7 @@ void vga_init(void) {
     vga_row = 0;
     vga_col = 0;
     vga_current_color = VGA_DEFAULT_COLOR;
-    utf8_codepoint = 0;
-    utf8_min_codepoint = 0;
+    utf8_codepoint = utf8_min_codepoint = 0;
     utf8_remaining = 0;
     vga_load_font();
     for (size_t r = 0; r < VGA_HEIGHT; r++)
@@ -262,8 +222,7 @@ void vga_init(void) {
  * vga_init() ничего не трогает в состоянии цвета — только содержимое
  * экрана и позицию, как и положено "clear", а не "reinit". */
 void vga_clear(void) {
-    utf8_codepoint = 0;
-    utf8_min_codepoint = 0;
+    utf8_codepoint = utf8_min_codepoint = 0;
     utf8_remaining = 0;
     for (size_t r = 0; r < VGA_HEIGHT; r++)
         for (size_t c = 0; c < VGA_WIDTH; c++)

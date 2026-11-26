@@ -353,7 +353,7 @@ TOUCH_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     $(ARCH_GFX_SOURCES) $(ARCH_INPUT_SOURCES) \
     kernel/kernel_touch.c kernel/panic_gui.c \
     gui/window.c gui/cursor.c gui/gconsole.c gui/terminal_app.c \
-    gui/png.c \
+    gui/png.c gui/gif.c \
     gui/touch/touch_theme.c \
     gui/touch/osk.c \
     gui/touch/app_terminal.c \
@@ -394,6 +394,34 @@ $(ABOUT_PNG_O): $(ABOUT_PNG_C) $(CFLAGS_STAMP)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 TOUCH_OBJ += $(ABOUT_PNG_O)
+
+# ---- Встроенный GIF-пример для Image Viewer ----
+SAMPLE_GIF_C := $(BUILD)/ineffa_gif.c
+SAMPLE_GIF_O := $(OBJDIR)/ineffa_gif.o
+
+$(SAMPLE_GIF_C): docs/img/ineffa-toaster.gif
+	@mkdir -p $(dir $@)
+	@python3 -c 'd=open("docs/img/ineffa-toaster.gif","rb").read(); print("#include <stddef.h>\n#include <stdint.h>\nconst uint8_t g_sample_ineffa_gif[] = {"); [print(",".join(str(b) for b in d[i:i+16]) + ",") for i in range(0,len(d),16)]; print("};\nconst size_t g_sample_ineffa_gif_len = sizeof(g_sample_ineffa_gif);")' > $@
+
+$(SAMPLE_GIF_O): $(SAMPLE_GIF_C) $(CFLAGS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+TOUCH_OBJ += $(SAMPLE_GIF_O)
+
+# ---- Второй встроенный GIF-пример для Image Viewer -----------------------
+SAMPLE_DR_GIF_C := $(BUILD)/dr_gif.c
+SAMPLE_DR_GIF_O := $(OBJDIR)/dr_gif.o
+
+$(SAMPLE_DR_GIF_C): docs/img/dr.gif
+	@mkdir -p $(dir $@)
+	@python3 -c 'd=open("docs/img/dr.gif","rb").read(); print("#include <stddef.h>\n#include <stdint.h>\nconst uint8_t g_sample_dr_gif[] = {"); [print(",".join(str(b) for b in d[i:i+16]) + ",") for i in range(0,len(d),16)]; print("};\nconst size_t g_sample_dr_gif_len = sizeof(g_sample_dr_gif);")' > $@
+
+$(SAMPLE_DR_GIF_O): $(SAMPLE_DR_GIF_C) $(CFLAGS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+TOUCH_OBJ += $(SAMPLE_DR_GIF_O)
 
 # ---- Прошивки сопроцессоров (Wi-Fi, zap-шейдер GPU) ----
 # Лежат локально, не в репозитории: они подписаны под устройство и сняты с

@@ -141,10 +141,10 @@ void hal_input_init(void) {
          * произошло, было уже нельзя, телефон никуда не возвращался.
          * Теперь итог печатается и в любом случае возвращаемся за
          * журналом. Признак включается только сборкой для отладки. */
-        early_con_puts(g_touch_ok ? "posdev: тач поднялся\n"
-                                  : "posdev: тач не поднялся\n");
+        early_con_puts(g_touch_ok ? "posdev: TACHSKRIN PODNYALSYA\n"
+                                  : "posdev: tachskrin ne podnyalsya\n");
         hal_time_delay_ms(2500);
-        early_con_puts("posdev: журнал записан, перезагрузите устройство\n");
+        early_con_puts("posdev: zhurnal zapisan, perezagruzite telefon\n");
         hal_time_delay_ms(1500);
 
         /* ОСТАНОВКИ БОЛЬШЕ НЕТ.

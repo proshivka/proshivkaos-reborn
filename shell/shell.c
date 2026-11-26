@@ -112,7 +112,7 @@ static void cmd_ls(int argc, char *argv[]) {
     if (!ramfs_is_dir(path)) {
         const ramfs_file_t *f = ramfs_lookup(path);
         if (!f) {
-            hal_console_write("ls: нет такого объекта: ");
+            hal_console_write("ls: нет такого файла или каталога: ");
             hal_console_write(argc > 1 ? argv[1] : path);
             hal_console_putc('\n');
             return;
@@ -158,7 +158,7 @@ static void cmd_cd(int argc, char *argv[]) {
 
     hal_console_write("cd: ");
     hal_console_write(arg);
-    hal_console_write(ramfs_lookup(path) ? ": это не директория\n" : ": нет такой директории\n");
+    hal_console_write(ramfs_lookup(path) ? ": это не каталог\n" : ": данный каталог отсутствует\n");
 }
 
 static void cmd_cat(int argc, char *argv[]) {
@@ -197,7 +197,7 @@ static void cmd_cat(int argc, char *argv[]) {
 
 static void cmd_touch(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("usage: touch <файл>\n");
+        hal_console_write("usage: touch <file>\n");
         return;
     }
 
@@ -240,7 +240,7 @@ static void nf_info(int row) {
 
     const char *label = 0, *value = 0;
     switch (row) {
-    case 2: label = "kernel"; value = "microkernel, этап 2";    break;
+    case 2: label = "kernel"; value = PROSHIVKAOS_VERSION;    break;
     case 3: label = "hal   "; value = "console/mem/thread(stub)"; break;
     case 4: label = "fs    "; value = 0;                        break;
     case 5: label = "arch  "; value = hal_arch_name();          break;
@@ -327,7 +327,7 @@ static void cmd_df(void) {
         hal_console_write("  free "); print_size_human(free_b);
         hal_console_putc('\n');
     } else {
-        hal_console_write("disk   : отсутствует\n");
+        hal_console_write("диск   : отсутствует (только RamFS)\n");
     }
     hal_console_write("ramfs  : "); print_size_human(ram_bytes);
     hal_console_write(" занято, "); print_uint((unsigned)used_entries);
@@ -415,7 +415,7 @@ static void cmd_udpsend(int argc, char *argv[]) {
     uint8_t ip[4];
     uint16_t port;
     if (argc < 4 || parse_ip(argv[1], ip) != 0 || parse_port(argv[2], &port) != 0) {
-        hal_console_write("usage: udpsend <a.b.c.d> <порт> <текст>\n");
+        hal_console_write("usage: udpsend <a.b.c.d> <port> <text>\n");
         return;
     }
 
@@ -436,8 +436,8 @@ static void cmd_udpsend(int argc, char *argv[]) {
 
 static void print_dns_error(int r) {
     switch (r) {
-    case DNS_ERR_NAME:     hal_console_write("dns: неверное имя\n"); break;
-    case DNS_ERR_TIMEOUT:  hal_console_write("dns: нет ответа (проверьте адрес)\n"); break;
+    case DNS_ERR_NAME:     hal_console_write("dns: неправильное имя\n"); break;
+    case DNS_ERR_TIMEOUT:  hal_console_write("dns: нет ответа от сервера (проверьте адрес)\n"); break;
     case DNS_ERR_NXDOMAIN: hal_console_write("dns: имя не найдено\n"); break;
     case DNS_ERR_NOADDR:   hal_console_write("dns: нет A-записи\n"); break;
     case DNS_ERR_NET:      hal_console_write("dns: ошибка отправки\n"); break;
@@ -472,7 +472,7 @@ static void req_add(char *buf, size_t *len, size_t cap, const char *s) {
  * (example.com, neverssl.com). */
 static void cmd_http(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("usage: http <хост> [путь]\n");
+        hal_console_write("usage: http <host> [path]\n");
         return;
     }
     const char *host = argv[1];
@@ -488,7 +488,7 @@ static void cmd_http(int argc, char *argv[]) {
     int r = tcp_connect(ip, 80);
     if (r != TCP_OK) {
         hal_console_write(r == TCP_ERR_RESET   ? "http: порт закрыт (RST)\n"
-                        : r == TCP_ERR_TIMEOUT ? "http: timeout\n"
+                        : r == TCP_ERR_TIMEOUT ? "http: таймаут соединения\n"
                                                : "http: ошибка соединения\n");
         return;
     }
@@ -513,7 +513,7 @@ static void cmd_http(int argc, char *argv[]) {
     unsigned total = 0, shown = 0;
     for (;;) {
         int n = tcp_recv(buf, sizeof buf, NET_POLL_LIMIT);
-        if (n < 0) { hal_console_write("\nhttp: timeout\n"); break; }
+        if (n < 0) { hal_console_write("\nhttp: таймаут/ошибка приёма\n"); break; }
         if (n == 0) break;                     /* сервер закрыл соединение */
 
         for (int i = 0; i < n; i++) {
@@ -560,13 +560,13 @@ static void cmd_arping(void) {
     for (long t = 0; t < 20000000; t++) {
         size_t n = hal_net_recv(r, sizeof r);
         if (n >= 42 && r[12] == 0x08 && r[13] == 0x06 && r[21] == 0x02) {
-            hal_console_write("получено от 10.0.2.2, mac ");
+            hal_console_write("ответ от 10.0.2.2, mac ");
             put_mac(r + 22);
             hal_console_putc('\n');
             return;
         }
     }
-    hal_console_write("arping: не отвечает\n");
+    hal_console_write("arping: нет ответа\n");
 }
 
 static int parse_ip(const char *s, uint8_t out[4]) {
@@ -597,7 +597,7 @@ static void put_ip(const uint8_t *ip) {
 static void cmd_ping(int argc, char *argv[]) {
     uint8_t ip[4];
     if (argc < 2 || parse_ip(argv[1], ip) != 0) {
-        hal_console_write("usage: ping <ip>\n");
+        hal_console_write("usage: ping <a.b.c.d>\n");
         return;
     }
 
@@ -606,17 +606,17 @@ static void cmd_ping(int argc, char *argv[]) {
         int r = net_ping(ip, seq);
         if (r == PING_OK) {
             ok++;
-            hal_console_write("получено от "); put_ip(ip);
+            hal_console_write("ответ от "); put_ip(ip);
             hal_console_write(": seq="); put_dec(seq); hal_console_putc('\n');
         } else if (r == PING_NO_ARP) {
-            hal_console_write("ping: нет MAC-адреса next-hop (arp)\n");
+            hal_console_write("ping: нет MAC-адреса для next-hop (arp)\n");
             return;
         } else if (r == PING_TX_ERR) {
             hal_console_write("ping: ошибка отправки\n");
             return;
         } else {
             hal_console_write("seq="); put_dec(seq);
-            hal_console_write(": не отвечает\n");
+            hal_console_write(": нет ответа\n");
         }
     }
     hal_console_write("--- "); put_ip(ip); hal_console_write(": ");
@@ -628,7 +628,7 @@ static void cmd_ping(int argc, char *argv[]) {
  * отсутствии автоматически внутри editor_run() при первом сохранении. */
 static void cmd_edit(int argc, char *argv[]) {
     if (argc < 2) {
-        hal_console_write("использование: edit <файл>\n");
+        hal_console_write("usage: edit <file>\n");
         return;
     }
 
@@ -639,29 +639,36 @@ static void cmd_edit(int argc, char *argv[]) {
     editor_run(path);
 }
 
+static void cmd_hpbd(void) {
+    hal_console_write(
+        "С днём рождения, prosh1vka!\n"
+    );
+}
+
 static void cmd_help(void) {
     hal_console_write(
         "Доступные команды:\n"
-        "  ls [директория]         - список файлов\n"
-        "  cd [директория]         - сменить папку (cd .., cd ~, cd /)\n"
-        "  cat <файл>         - показать содержимое файла\n"
+        "  ls [каталог]         - список файлов\n"
+        "  cd [каталог]         - перейти в каталог (cd .., cd ~, cd /)\n"
+        "  cat <файл>         - вывести содержимое файла\n"
         "  touch <файл>       - создать пустой файл\n"
         "  clear              - очистить вывод консоли\n"
-        "  echo               - вывести текст\n"
-        "  edit <файл>        - редактор кода\n"
-        "                       (Ctrl+S сохранить, Ctrl+Q выход, Ctrl+F поиск)\n"
+        "  echo               - выводит текст\n"
+        "  edit <файл>        - полноэкранный редактор\n"
+        "                       (^S сохранить, ^Q выход, ^F поиск)\n"
         "  neofetch           - информация об устройстве\n"
-        "  df                 - свободное пространство на диске\n"
-        "  fsinfo             - состояние диска\n"
+        "  df                 - свободное место на диске\n"
+        "  fsinfo             - состояние диска (сохранение файлов)\n"
         "  help               - эта справка\n"
         "  ifconfig           - MAC-адрес сетевой карты\n"
         "  arping             - проверка сети (ARP к 10.0.2.2)\n"
         "  ping <ip>          - ICMP echo\n"
         "  dhcp               - получить адрес по DHCP\n"
-        "  udpsend <ip> <p> <текст> - отправить UDP\n"
-        "  nslookup <имя>    - узнать IP-адрес по имени (DNS)\n"
-        "  http <хост> [путь] - HTTP GET по порту 80\n"
-        "  ssh [-p порт] user@host [флаг] - SSH\n"
+        "  udpsend <ip> <p> <text> - отправить UDP\n"
+        "  nslookup <name>    - узнать IP-адрес по имени (DNS)\n"
+        "  http <host> [path] - HTTP GET по порту 80\n"
+        "  ssh [-p port] user@host [cmd] - SSH\n"
+        "  hpbd               - сюрприз\n"
     );
 }
 
@@ -683,6 +690,7 @@ static const char *const COMMANDS[] = {
     "ls", "cd", "cat", "touch", "edit", "neofetch", "df", "fsinfo", "help",
     "clear", "echo",
     "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
+    "hpbd",
 };
 
 typedef struct {
@@ -737,6 +745,7 @@ static void exec_shell_cmd(int argc, char *argv[]) {
         else if (str_eq(argv[0], "udpsend")) cmd_udpsend(argc, argv);
         else if (str_eq(argv[0], "nslookup")) cmd_nslookup(argc, argv);
         else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
+        else if (str_eq(argv[0], "hpbd"))     cmd_hpbd();
         else if (shell_try_netcmd(argc, argv)) {}
         else {
             hal_console_write("неизвестная команда: ");
@@ -789,7 +798,7 @@ void shell_run(void) {
         hal_console_set_capture(0, 0);
 
         if (ramfs_is_dir(redir_path)) {
-            hal_console_write("ошибка: это директория\n");
+            hal_console_write("ошибка: это каталог\n");
             continue;
         }
 
@@ -813,6 +822,6 @@ void shell_run(void) {
             wr = ramfs_write(redir_path, cap.buf, cap.len);
         }
         if (wr != 0)
-            hal_console_write("ошибка записи\n");
+            hal_console_write("ошибка записи в файл\n");
     }
 }

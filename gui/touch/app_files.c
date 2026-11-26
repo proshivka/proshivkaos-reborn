@@ -16,6 +16,7 @@
 #include "ramfs.h"
 #include "utf8.h"
 #include "png.h"
+#include "gif.h"
 
 #define MODE_LIST   0
 #define MODE_VIEWER 1
@@ -320,7 +321,8 @@ static void files_on_touch(int type, int x, int y) {
 
     if (files[was_row]->is_dir) {
         enter_dir(files[was_row]->name);
-    } else if (png_is_png(files[was_row]->data, ramfs_inline_len(files[was_row]))) {
+    } else if (png_is_png(files[was_row]->data, ramfs_inline_len(files[was_row])) ||
+               gif_is_gif(files[was_row]->data, ramfs_inline_len(files[was_row]))) {
         app_image_open(files[was_row]->path, 1);
     } else {
         str_copy(g_view_name, files[was_row]->path, sizeof(g_view_name));

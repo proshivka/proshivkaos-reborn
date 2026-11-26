@@ -84,7 +84,7 @@ void touch_ui_open(const char *app_name);
  * стрелка назад вернёт в файловый менеджер, иначе на домашний экран. */
 void app_edit_open(const char *path, int from_files);
 
-/* Открыть изображение PNG в просмотрщике (gui/touch/app_image.c).
+/* Открыть изображение PNG или GIF в Image Viewer (gui/touch/app_image.c).
  * from_files = 1 — кнопка назад вернёт в файловый менеджер. */
 void app_image_open(const char *path, int from_files);
 
