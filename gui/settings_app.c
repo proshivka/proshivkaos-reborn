@@ -7,7 +7,8 @@ void settings_app_init(settings_app_t *app, const gui_window_t *win, uint8_t *de
 
     gconsole_write(&app->console, "SETTINGS");
     gconsole_write(&app->console, "\n\nTHEME:");
-    gconsole_write(&app->console, "\nL LIGHT D DARK");
+    gconsole_write(&app->console, "\nL LIGHT  D DARK");
+    gconsole_write(&app->console, "\nN WIN11  M W11DK");
     gconsole_write(&app->console, "\n\nBACKGROUND:");
     gconsole_write(&app->console, "\nW WALLPAPER");
     gconsole_write(&app->console, "\n1 CYAN 2 GREEN");
@@ -23,6 +24,8 @@ int settings_app_handle_char(settings_app_t *app, char c) {
     switch (c) {
         case 'l': case 'L': return SETTINGS_THEME_LIGHT;
         case 'd': case 'D': return SETTINGS_THEME_DARK;
+        case 'n': case 'N': return SETTINGS_THEME_WIN11;
+        case 'm': case 'M': return SETTINGS_THEME_WIN11_DARK;
 
         case 'w': case 'W': return SETTINGS_WALLPAPER;
 

@@ -138,11 +138,52 @@ int ramfs_write(const char *path, const char *data, size_t len) {
     ramfs_file_t *e = find_slot(norm);
     if (!e || e->is_dir) return -1;
 
-    if (len > RAMFS_MAX_FILE_SIZE) len = RAMFS_MAX_FILE_SIZE;
+    if (len > RAMFS_MAX_FILE_SIZE) {
+        /* Большой файл: хвост уходит прямо на диск. Не вышло — старое
+           содержимое остаётся как было (молча обрезать было бы потерей данных). */
+        if (len > RAMFS_MAX_BIG_SIZE || !ramfs_persist_big_ok()) return -2;
+        int rc = ramfs_persist_write_big(g_entries, (size_t)(e - g_entries),
+                                         (const uint8_t *)data, len);
+        if (rc != 0) return rc;
+        /* На диске всё лежит — теперь обновляем окно в ОЗУ. */
+        for (size_t i = 0; i < RAMFS_MAX_FILE_SIZE; i++) e->data[i] = (uint8_t)data[i];
+        e->size = len;
+        return 0;
+    }
+
     for (size_t i = 0; i < len; i++) e->data[i] = (uint8_t)data[i];
     e->size = len;
     ramfs_persist_save(g_entries, (size_t)(e - g_entries));
     return 0;
+}
+
+long ramfs_read(const char *path, size_t off, void *buf, size_t len) {
+    char norm[RAMFS_MAX_PATH_LEN];
+    normalize_path(path, norm, sizeof(norm));
+
+    ramfs_file_t *e = find_slot(norm);
+    if (!e || e->is_dir) return -1;
+    if (off >= e->size) return 0;
+    if (len > e->size - off) len = e->size - off;
+
+    uint8_t *out = (uint8_t *)buf;
+    size_t done = 0;
+    if (off < RAMFS_MAX_FILE_SIZE) {                 /* начало — из окна */
+        size_t n = RAMFS_MAX_FILE_SIZE - off;
+        if (n > len) n = len;
+        for (size_t i = 0; i < n; i++) out[i] = e->data[off + i];
+        done = n;
+    }
+    if (done < len) {                                /* остальное — с диска */
+        size_t tail_off = off + done - RAMFS_MAX_FILE_SIZE;
+        if (ramfs_persist_read_tail((size_t)(e - g_entries), tail_off, out + done, len - done) != 0)
+            return -1;
+    }
+    return (long)len;
+}
+
+void ramfs_space(uint32_t *free_bytes, uint32_t *total_bytes) {
+    ramfs_persist_space(free_bytes, total_bytes);
 }
 
 const ramfs_file_t *ramfs_lookup(const char *path) {

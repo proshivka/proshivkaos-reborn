@@ -42,6 +42,7 @@ static const touch_app_t *const g_apps[] = {
     &app_terminal,
     &app_files,
     &app_edit,
+    &app_image,
     &app_settings,
     &app_wifi,
     &app_about

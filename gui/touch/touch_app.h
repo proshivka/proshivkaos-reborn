@@ -58,6 +58,7 @@ extern const touch_app_t app_files;
 extern const touch_app_t app_edit;
 extern const touch_app_t app_about;
 extern const touch_app_t app_wifi;
+extern const touch_app_t app_image;
 
 /* --- Настройки, общие для оболочки и приложения "Настройки" --- */
 int  touch_ui_text_scale(void);
@@ -82,6 +83,10 @@ void touch_ui_open(const char *app_name);
 /* Открыть файл в редакторе (gui/touch/app_edit.c). from_files = 1 —
  * стрелка назад вернёт в файловый менеджер, иначе на домашний экран. */
 void app_edit_open(const char *path, int from_files);
+
+/* Открыть изображение PNG или GIF в Image Viewer (gui/touch/app_image.c).
+ * from_files = 1 — кнопка назад вернёт в файловый менеджер. */
+void app_image_open(const char *path, int from_files);
 
 /* Показать или спрятать экранную клавиатуру во время работы приложения. */
 void touch_ui_keyboard(int on);

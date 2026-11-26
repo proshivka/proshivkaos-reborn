@@ -1,6 +1,8 @@
-/* gui/window.h — окно в стиле Windows XP: синяя градиентная title bar,
- * тело в свете/тёмной теме, ресайз за правый нижний угол, панель задач
- * с кнопкой "Пуск" и всплывающим меню запуска приложений.
+/* gui/window.h — оконный хром, панель задач и меню "Пуск".
+ * Поддерживает два семейства тем:
+ *   - Windows XP (Luna): светлая и тёмная (классический градиент + глянец)
+ *   - Windows 11 (Fluent / Mica): светлая и тёмная (мягкие тени, скругления,
+ *     центрированная панель задач с логотипом Win11 и часами, плавающее меню Пуск).
  */
 #ifndef PROSHIVKAOS_WINDOW_H
 #define PROSHIVKAOS_WINDOW_H
@@ -14,6 +16,31 @@
 #define MIN_WIN_W    60
 #define MIN_WIN_H    40
 
+#define GUI_THEME_XP_LIGHT    0
+#define GUI_THEME_XP_DARK     1
+#define GUI_THEME_WIN11_LIGHT 2
+#define GUI_THEME_WIN11_DARK  3
+
+/* Индексы палитры, выделяемые под интерфейс Windows 11 (слоты 32..46,
+ * при этом 47 остаётся GFX_UI_SHADOW). */
+enum {
+    GFX_W11_LIGHT_BG   = 32,
+    GFX_W11_LIGHT_TERM = 33,
+    GFX_W11_LIGHT_TEXT = 34,
+    GFX_W11_LIGHT_DIM  = 35,
+    GFX_W11_DARK_BG    = 36,
+    GFX_W11_DARK_TERM  = 37,
+    GFX_W11_DARK_TEXT  = 38,
+    GFX_W11_DARK_DIM   = 39,
+    GFX_W11_ACCENT     = 40,
+    GFX_W11_ACCENT_LT  = 41,
+    GFX_W11_TASKBAR_LT = 42,
+    GFX_W11_TASKBAR_DK = 43,
+    GFX_W11_BORDER_LT  = 44,
+    GFX_W11_BORDER_DK  = 45,
+    GFX_W11_CLOSE_RED  = 46
+};
+
 typedef struct {
     int x, y, w, h;
     const char *title;
@@ -24,9 +51,13 @@ typedef struct {
     int saved_x, saved_y, saved_w, saved_h;   /* геометрия до разворота — для восстановления */
 } gui_window_t;
 
+void gui_set_theme(int theme);
+void gui_set_cursor_pos(int x, int y);
+int  gui_taskbar_height(int screen_h, int theme);
+
 void gui_draw_desktop(uint8_t bg_color);
 void gui_draw_window_chrome(const gui_window_t *win, int dark_theme);
-void gui_draw_taskbar(int screen_w, int screen_h);
+void gui_draw_taskbar(int screen_w, int screen_h, int tb_count, int start_open, int hour, int min);
 
 /* Область содержимого окна (внутри рамки и под title bar) —
  * приложение рисует/пишет текст именно сюда. */
@@ -41,17 +72,18 @@ int gui_point_in_minimize_button(int px, int py, const gui_window_t *win);
 int gui_point_in_resize_grip(int px, int py, const gui_window_t *win);
 
 /* Кнопка "Пуск" в панели задач */
-void gui_start_button_rect(int screen_w, int screen_h, int *x, int *y, int *w, int *h);
+void gui_start_button_rect(int screen_w, int screen_h, int tb_count, int *x, int *y, int *w, int *h);
 
-/* Кнопки открытых окон в панели задач (справа от "Пуск") */
+/* Кнопки открытых окон в панели задач */
 #define TASKBAR_BUTTON_W 60
-void gui_taskbar_button_rect(int screen_w, int screen_h, int index, int *x, int *y, int *w, int *h);
-void gui_draw_taskbar_button(int screen_w, int screen_h, int index, const char *title,
-                              int active, int dark_theme);
+void gui_taskbar_button_rect(int screen_w, int screen_h, int index, int tb_count,
+                             int *x, int *y, int *w, int *h);
+void gui_draw_taskbar_button(int screen_w, int screen_h, int index, int tb_count,
+                             const char *title, int icon_id, int active, int dark_theme);
 
 /* Всплывающее меню "Пуск": 2 пункта, TERMINAL и SETTINGS */
 #define START_MENU_ITEMS 2
-void gui_draw_start_menu(int screen_h, int dark_theme);
-void gui_start_menu_item_rect(int screen_h, int index, int *x, int *y, int *w, int *h);
+void gui_draw_start_menu(int screen_w, int screen_h, int dark_theme);
+void gui_start_menu_item_rect(int screen_w, int screen_h, int index, int *x, int *y, int *w, int *h);
 
 #endif

@@ -15,6 +15,8 @@
 #include "hal_input.h"
 #include "ramfs.h"
 #include "utf8.h"
+#include "png.h"
+#include "gif.h"
 
 #define MODE_LIST   0
 #define MODE_VIEWER 1
@@ -181,6 +183,21 @@ static void render_viewer(void) {
         return;
     }
 
+    /* Большой файл (хвост на диске) или с нулевыми байтами — не текст:
+       data[] у большого содержит только окно, а у бинарного вывод был бы
+       мусором. Показываем заглушку с размером. */
+    int not_text = f->size > RAMFS_MAX_FILE_SIZE;
+    for (size_t k = 0; !not_text && k < ramfs_inline_len(f); k++)
+        if (f->data[k] == 0) not_text = 1;
+    if (not_text) {
+        char buf[40], num[12];
+        int pos = touch_strcat(buf, 0, sizeof(buf), "BINARY FILE, ");
+        pos = touch_strcat(buf, pos, sizeof(buf), touch_itoa((int)f->size, num, 0));
+        touch_strcat(buf, pos, sizeof(buf), " BYTES");
+        hal_gfx_draw_string_scaled(area_x, area_y, buf, GFX_UI_TEXT_DIM, TM.scale_small);
+        return;
+    }
+
     /* Перенос по ширине области, с учётом прокрутки по строкам. */
     /* Основной масштаб, как в редакторе: при мелком (1 на узком экране)
        кириллицы в шрифте нет. */
@@ -280,7 +297,12 @@ static void files_on_touch(int type, int x, int y) {
     if (was_edit) {
         int ex, ey, ew, eh;
         edit_btn_rect(&ex, &ey, &ew, &eh);
-        if (touch_hit(x, y, ex, ey, ew, eh)) app_edit_open(g_view_name, 1);
+        if (touch_hit(x, y, ex, ey, ew, eh)) {
+            /* Редактор держит только RAMFS_MAX_FILE_SIZE байт: сохранение
+               большого файла урезало бы его — не пускаем. */
+            const ramfs_file_t *ef = ramfs_lookup(g_view_name);
+            if (ef && ef->size <= RAMFS_MAX_FILE_SIZE) app_edit_open(g_view_name, 1);
+        }
         return;
     }
 
@@ -299,6 +321,9 @@ static void files_on_touch(int type, int x, int y) {
 
     if (files[was_row]->is_dir) {
         enter_dir(files[was_row]->name);
+    } else if (png_is_png(files[was_row]->data, ramfs_inline_len(files[was_row])) ||
+               gif_is_gif(files[was_row]->data, ramfs_inline_len(files[was_row]))) {
+        app_image_open(files[was_row]->path, 1);
     } else {
         str_copy(g_view_name, files[was_row]->path, sizeof(g_view_name));
         g_mode = MODE_VIEWER;

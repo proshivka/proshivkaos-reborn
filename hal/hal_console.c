@@ -20,15 +20,28 @@ void vga_set_cursor(int row, int col);
 int  keyboard_poll(void);
 char keyboard_getc_blocking(void);
 
+static void (*g_capture_fn)(char c, void *ctx) = 0;
+static void *g_capture_ctx = 0;
+
+void hal_console_set_capture(void (*fn)(char c, void *ctx), void *ctx) {
+    g_capture_fn = fn;
+    g_capture_ctx = ctx;
+}
+
 void hal_console_init(void) {
     vga_init();
 }
 
 void hal_console_putc(char c) {
+    if (g_capture_fn) { g_capture_fn(c, g_capture_ctx); return; }
     vga_putc(c);
 }
 
 void hal_console_write(const char *s) {
+    if (g_capture_fn) {
+        while (*s) g_capture_fn(*s++, g_capture_ctx);
+        return;
+    }
     vga_write(s);
 }
 

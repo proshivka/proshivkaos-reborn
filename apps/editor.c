@@ -39,6 +39,7 @@ static int  line_count;
 static int  cur_row, cur_col;   /* логическая позиция курсора в тексте */
 static int  top_line;           /* первая видимая строка (вертикальный скролл) */
 static int  dirty;              /* есть несохранённые изменения */
+static int  locked;             /* файл больше окна RamFS: показан его начальный кусок, сохранять нельзя */
 static char cur_filename[RAMFS_MAX_PATH_LEN];
 static char status_msg[SCREEN_COLS];
 
@@ -229,15 +230,22 @@ static void editor_reset(void) {
 static void editor_load(const char *path) {
     editor_reset();
     str_copy(cur_filename, path, sizeof(cur_filename));
+    locked = 0;
 
     const ramfs_file_t *f = ramfs_lookup(path);
     if (!f || f->size == 0) return;
+
+    /* У большого файла в data[] только окно; остальное на диске. Читать за
+       окном нельзя, а сохранение показанного куска затёрло бы хвост. */
+    size_t flen = ramfs_inline_len(f);
+    locked = f->size > RAMFS_MAX_FILE_SIZE;
+    if (locked) str_copy(status_msg, "bolshoy fayl: tolko chtenie", sizeof(status_msg));
 
     int row = 0, col = 0;
     lines[0].len = 0;
     lines[0].text[0] = '\0';
 
-    for (size_t i = 0; i < f->size && row < EDITOR_MAX_LINES; i++) {
+    for (size_t i = 0; i < flen && row < EDITOR_MAX_LINES; i++) {
         char c = (char)f->data[i];
         if (c == '\n') {
             lines[row].text[col] = '\0';
@@ -261,6 +269,10 @@ static void editor_load(const char *path) {
 }
 
 static void editor_save(void) {
+    if (locked) {
+        str_copy(status_msg, "bolshoy fayl: ne sohranen", sizeof(status_msg));
+        return;
+    }
     static char out[RAMFS_MAX_FILE_SIZE];
     size_t total = 0;
 

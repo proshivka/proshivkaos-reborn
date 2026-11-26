@@ -36,6 +36,7 @@ static char g_path[RAMFS_MAX_PATH_LEN]; /* пусто — файл ещё не �
 
 static int g_dirty       = 0;
 static int g_save_failed = 0;
+static int g_locked      = 0;           /* файл больше окна: сохранять нельзя */
 static int g_from_files  = 0;           /* назад — в файловый менеджер       */
 
 static int g_scroll = 0;                /* прокрутка текста, px              */
@@ -164,10 +165,11 @@ static void load_file(const char *path) {
     str_copy(g_path, path, sizeof(g_path));
 
     g_len = 0;
+    g_locked = 0;
     const ramfs_file_t *f = ramfs_lookup(path);
     if (f && !f->is_dir) {
-        int n = (int)f->size;
-        if (n > RAMFS_MAX_FILE_SIZE) n = RAMFS_MAX_FILE_SIZE;
+        int n = (int)ramfs_inline_len(f);
+        g_locked = f->size > RAMFS_MAX_FILE_SIZE;
         for (int i = 0; i < n; i++) g_buf[i] = (char)f->data[i];
         g_len = n;
     }
@@ -179,6 +181,9 @@ static void load_file(const char *path) {
 }
 
 static void save_file(void) {
+    /* Большой файл в буфер влез лишь начальным окном: запись затёрла бы хвост. */
+    if (g_locked) { g_save_failed = 1; return; }
+
     /* Файла может ещё не быть (новый документ) — тогда создаём. */
     int rc = ramfs_touch(g_path);
     if (rc == 0) rc = ramfs_write(g_path, g_buf, (size_t)g_len);

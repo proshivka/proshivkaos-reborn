@@ -15,12 +15,13 @@
 
 /* Версия системы. Одна строка на весь проект: её показывают и neofetch в
  * терминале, и экран "о системе". */
-#define PROSHIVKAOS_VERSION "0.6.0"
+#define PROSHIVKAOS_VERSION "0.8.0"
 
 /* ---------------- Консоль ---------------- */
 void hal_console_init(void);
 void hal_console_putc(char c);
 void hal_console_write(const char *s);
+void hal_console_set_capture(void (*fn)(char c, void *ctx), void *ctx);
 int  hal_console_getc(void);      /* -1, если нет данных (неблокирующий poll) */
 char hal_console_getc_blocking(void);
 int    hal_net_init(void);
