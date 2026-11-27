@@ -23,6 +23,9 @@ typedef struct {
 #define SETTINGS_THEME_DARK       7
 #define SETTINGS_THEME_WIN11      8
 #define SETTINGS_THEME_WIN11_DARK 9
+#define SETTINGS_SCALE_1          10
+#define SETTINGS_SCALE_2          11
+#define SETTINGS_SCALE_3          12
 
 void settings_app_init(settings_app_t *app, const gui_window_t *win, uint8_t *desktop_bg);
 int  settings_app_handle_char(settings_app_t *app, char c);

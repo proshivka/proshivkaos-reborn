@@ -184,27 +184,23 @@ void hal_gfx_drop_shadow(int x, int y, int w, int h, int radius, int depth);
 void hal_gfx_present(void);
 
 /* ---------------- Текст ---------------- */
-/* Шрифт 8x8, только заглавные/цифры/пунктуация (см. gui/font8x8.c);
- * строчные буквы приводятся к заглавным автоматически. */
+/* Базовая высота сетки текста 8 пикселей (сглаженные шрифты Roboto и
+ * Roboto Mono из gui/font.c привязаны к клетке 8*scale). */
 #define FONT_W 8
 #define FONT_H 8
 
-/* Ширина клетки текста при данном масштабе: на крупных масштабах это шаг
- * моноширинного сглаженного шрифта, он уже восьми пикселей на масштаб. */
+/* Ширина клетки моноширинного текста при данном масштабе. */
 int hal_gfx_cell_w(int scale);
 
 void hal_gfx_draw_char(int x, int y, char c, uint8_t fg, uint8_t bg);
 void hal_gfx_draw_string(int x, int y, const char *s, uint8_t fg, uint8_t bg);
 
-/* Без заливки фона — рисуются только "включённые" пиксели глифа.
- * Нужно для текста поверх картинок и градиентов. */
+/* Без заливки фона — рисуются только пиксели глифа (UTF-8, Roboto). */
 void hal_gfx_draw_string_transparent(int x, int y, const char *s, uint8_t fg);
 
-/* Масштабированный текст. На экране телефона 8x8 нечитаемо: при плотности
- * ~300 dpi это буква высотой меньше миллиметра. scale=2..4 — рабочий
- * диапазон; каждый пиксель глифа рисуется квадратом scale x scale. */
+/* Масштабированный текст (scale=1..8, Roboto / Roboto Mono). */
 void hal_gfx_draw_char_scaled(int x, int y, char c, uint8_t fg, uint8_t bg, int scale);
-/* То же по коду Юникода (кириллица и др.); нужен масштаб >= 2, иначе "?". */
+/* То же по коду Юникода (латиница, кириллица и др.). */
 void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale);
 void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int scale);
 

@@ -366,7 +366,7 @@ void gui_draw_wallpaper_themed(int screen_w, int screen_h, int theme) {
         last_xp_h = -1;
     }
 
-    draw_watermark(4, 4, "SHHH, IT'S PROTOTYPE, DO NOT LEAK...");
+    draw_watermark(4, 4, "ТСС, ЭТО ПРОТОТИП, НЕ СЛИВАТЬ...");
 }
 
 void gui_draw_wallpaper(int screen_w, int screen_h) {

@@ -48,7 +48,7 @@ def load(path, px, weight):
     return f
 
 
-def render_face(path, px, weight):
+def render_face(path, px, weight, gamma=1.0, thresh=0):
     font = load(path, px, weight)
     ascent, descent = font.getmetrics()
     glyphs = []
@@ -62,6 +62,16 @@ def render_face(path, px, weight):
         im = Image.new("L", (W, H), 0)
         d = ImageDraw.Draw(im)
         d.text((pad, pad), ch, font=font, fill=255)
+        if gamma != 1.0 or thresh > 0:
+            pxs = im.load()
+            for y in range(H):
+                for x in range(W):
+                    v = pxs[x, y]
+                    if v < thresh:
+                        v = 0
+                    elif gamma != 1.0:
+                        v = min(255, int(((v / 255.0) ** gamma) * 255))
+                    pxs[x, y] = v
         bbox = im.getbbox()
         if bbox is None:
             glyphs.append((cp, 0, 0, 0, 0, int(round(adv * 64)), len(bits)))
@@ -76,11 +86,12 @@ def render_face(path, px, weight):
     return ascent, descent, glyphs, bits
 
 
-def emit(name, path, em_of_scale, weight, out):
+def emit(name, path, em_of_scale, weight_of_scale, gamma_of_scale, thresh_of_scale, out):
     faces = []
     for s in SCALES:
         px = em_of_scale(s)
-        asc, desc, glyphs, bits = render_face(path, px, weight)
+        asc, desc, glyphs, bits = render_face(
+            path, px, weight_of_scale(s), gamma_of_scale(s), thresh_of_scale(s))
         tag = "%s_%d" % (name, s)
         out.write("static const uint8_t %s_bits[] = {\n" % tag)
         for i in range(0, len(bits), 24):
@@ -103,8 +114,20 @@ def main():
     out.write("/* gui/font_data.c — СГЕНЕРИРОВАНО tools/fontgen.py, руками не править.\n")
     out.write(" * Roboto и Roboto Mono, SIL Open Font License 1.1 (third_party/fonts). */\n")
     out.write('#include "font.h"\n\n')
-    emit("ui", os.path.join(FONTS, "Roboto.ttf"), lambda s: 8 * s, 400, out)
-    emit("mono", os.path.join(FONTS, "RobotoMono.ttf"), lambda s: 7 * s, 400, out)
+    # На мелких масштабах (s=1,2) увеличиваем насыщенность и контраст,
+    # чтобы тонкие штрихи Roboto не размывались при 8-9 px.
+    emit("ui", os.path.join(FONTS, "Roboto.ttf"),
+         lambda s: 9 if s == 1 else 8 * s,
+         lambda s: 500 if s == 1 else (450 if s == 2 else 400),
+         lambda s: 0.65 if s == 1 else (0.85 if s == 2 else 1.0),
+         lambda s: 24 if s == 1 else 0,
+         out)
+    emit("mono", os.path.join(FONTS, "RobotoMono.ttf"),
+         lambda s: 8 if s == 1 else 7 * s,
+         lambda s: 500 if s == 1 else (450 if s == 2 else 400),
+         lambda s: 0.65 if s == 1 else (0.85 if s == 2 else 1.0),
+         lambda s: 24 if s == 1 else 0,
+         out)
 
 
 if __name__ == "__main__":

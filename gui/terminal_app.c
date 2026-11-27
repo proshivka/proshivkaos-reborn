@@ -216,17 +216,28 @@ static void exec_command(terminal_app_t *app, char *line) {
     char path[RAMFS_MAX_PATH_LEN];
 
     if (str_eq(argv[0], "ls")) {
-        const ramfs_file_t *files[RAMFS_MAX_ENTRIES];
-        size_t n = ramfs_list_dir(app->cwd, files, RAMFS_MAX_ENTRIES);
-        if (n == 0) {
-            gconsole_write(&app->console, "\n(empty)");
-        } else {
-            for (size_t i = 0; i < n; i++) {
+        resolve_path(app, argc >= 2 ? argv[1] : ".", path, sizeof(path));
+        if (!ramfs_is_dir(path)) {
+            const ramfs_file_t *f = ramfs_lookup(path);
+            if (!f) {
+                print_error(app, "нет такого файла или каталога");
+            } else {
                 gconsole_putc(&app->console, '\n');
-                if (files[i]->is_dir) gconsole_set_ink(&app->console, GFX_LIGHT_BLUE);
-                gconsole_write(&app->console, files[i]->name);
-                if (files[i]->is_dir) gconsole_write(&app->console, "/");
-                gconsole_set_ink(&app->console, app->console.fg);
+                gconsole_write(&app->console, f->name);
+            }
+        } else {
+            const ramfs_file_t *files[RAMFS_MAX_ENTRIES];
+            size_t n = ramfs_list_dir(path, files, RAMFS_MAX_ENTRIES);
+            if (n == 0) {
+                gconsole_write(&app->console, "\n(пусто)");
+            } else {
+                for (size_t i = 0; i < n; i++) {
+                    gconsole_putc(&app->console, '\n');
+                    if (files[i]->is_dir) gconsole_set_ink(&app->console, GFX_LIGHT_BLUE);
+                    gconsole_write(&app->console, files[i]->name);
+                    if (files[i]->is_dir) gconsole_write(&app->console, "/");
+                    gconsole_set_ink(&app->console, app->console.fg);
+                }
             }
         }
 
@@ -237,21 +248,21 @@ static void exec_command(terminal_app_t *app, char *line) {
     } else if (str_eq(argv[0], "cd")) {
         resolve_path(app, argc >= 2 ? argv[1] : "~", path, sizeof(path));
         if (!ramfs_is_dir(path)) {
-            print_error(app, "no such directory");
+            print_error(app, "нет такого каталога");
         } else {
             str_copy(app->cwd, path, sizeof(app->cwd));
         }
 
     } else if (str_eq(argv[0], "mkdir")) {
-        if (argc < 2) { print_error(app, "usage: mkdir <dir>"); return; }
+        if (argc < 2) { print_error(app, "использование: mkdir <каталог>"); return; }
         resolve_path(app, argv[1], path, sizeof(path));
         ramfs_mkdir(path);
 
     } else if (str_eq(argv[0], "cat")) {
-        if (argc < 2) { print_error(app, "usage: cat <file>"); return; }
+        if (argc < 2) { print_error(app, "использование: cat <файл>"); return; }
         resolve_path(app, argv[1], path, sizeof(path));
         const ramfs_file_t *f = ramfs_lookup(path);
-        if (!f || f->is_dir) { print_error(app, "not found"); return; }
+        if (!f || f->is_dir) { print_error(app, "не найдено"); return; }
         gconsole_putc(&app->console, '\n');
         uint8_t chunk[256];
         size_t off = 0;
@@ -268,19 +279,19 @@ static void exec_command(terminal_app_t *app, char *line) {
         }
 
     } else if (str_eq(argv[0], "touch")) {
-        if (argc < 2) { print_error(app, "usage: touch <file>"); return; }
+        if (argc < 2) { print_error(app, "использование: touch <файл>"); return; }
         resolve_path(app, argv[1], path, sizeof(path));
         ramfs_touch(path);
-        gconsole_write(&app->console, "\nok");
+        gconsole_write(&app->console, "\nготово");
 
     } else if (str_eq(argv[0], "edit")) {
-        if (argc < 2) { print_error(app, "usage: edit <file>"); return; }
+        if (argc < 2) { print_error(app, "использование: edit <файл>"); return; }
         resolve_path(app, argv[1], path, sizeof(path));
         ramfs_touch(path);
         str_copy(app->edit_filename, path, sizeof(app->edit_filename));
         app->edit_total = 0;
         app->in_edit_mode = 1;
-        gconsole_write(&app->console, "\n-- edit mode, line '.' = save --");
+        gconsole_write(&app->console, "\n-- режим правки, строка '.' = сохранить --");
 
     } else if (str_eq(argv[0], "clear")) {
         gconsole_clear(&app->console);
@@ -309,22 +320,20 @@ static void exec_command(terminal_app_t *app, char *line) {
         unsigned int ss = (unsigned int)(total % 60);
         gconsole_putc(&app->console, '\n');
         write_padded(&app->console, hh, 2);
-        gconsole_putc(&app->console, 'H');
-        gconsole_putc(&app->console, ' ');
+        gconsole_write(&app->console, "ч ");
         write_padded(&app->console, mm, 2);
-        gconsole_putc(&app->console, 'M');
-        gconsole_putc(&app->console, ' ');
+        gconsole_write(&app->console, "м ");
         write_padded(&app->console, ss, 2);
-        gconsole_putc(&app->console, 'S');
+        gconsole_write(&app->console, "с");
 
     } else if (str_eq(argv[0], "neofetch")) {
-        gconsole_write(&app->console, "\nPROSHIVKAOS NEXT ");
+        gconsole_write(&app->console, "\nproshivkaOS NEXT ");
         gconsole_write(&app->console, PROSHIVKAOS_VERSION);
-        gconsole_write(&app->console, "\nARCH: ");
+        gconsole_write(&app->console, "\nАРХ: ");
         gconsole_write(&app->console, hal_arch_name());
-        gconsole_write(&app->console, "\nCPU : ");
+        gconsole_write(&app->console, "\nЦПУ: ");
         gconsole_write(&app->console, hal_cpu_name());
-        gconsole_write(&app->console, "\nFS  : RAMFS + ");
+        gconsole_write(&app->console, "\nФС : RAMFS + ");
         gconsole_write(&app->console, ramfs_persist_state_name());
 
     } else if (str_eq(argv[0], "echo")) {
@@ -343,36 +352,36 @@ static void exec_command(terminal_app_t *app, char *line) {
 
         if (total_b > 0) {
             uint32_t used_b = total_b - free_b;
-            gconsole_write(&app->console, "\nDISK  : TOTAL ");
+            gconsole_write(&app->console, "\nДИСК  : ВСЕГО ");
             write_size_human(&app->console, total_b);
-            gconsole_write(&app->console, "  USED ");
+            gconsole_write(&app->console, "  ЗАНЯТО ");
             write_size_human(&app->console, used_b);
-            gconsole_write(&app->console, "  FREE ");
+            gconsole_write(&app->console, "  СВОБОДНО ");
             write_size_human(&app->console, free_b);
         } else {
-            gconsole_write(&app->console, "\nDISK  : NONE (RAMFS ONLY)");
+            gconsole_write(&app->console, "\nДИСК  : НЕТ (ТОЛЬКО RAMFS)");
         }
         gconsole_write(&app->console, "\nRAMFS : ");
         write_size_human(&app->console, ram_bytes);
-        gconsole_write(&app->console, " USED, ");
+        gconsole_write(&app->console, " ЗАНЯТО, ");
         write_uint(&app->console, (uint32_t)used_entries);
         gconsole_write(&app->console, "/");
         write_uint(&app->console, RAMFS_MAX_ENTRIES);
-        gconsole_write(&app->console, " ENTRIES");
-        gconsole_write(&app->console, "\nSTATE : ");
+        gconsole_write(&app->console, " ЗАПИСЕЙ");
+        gconsole_write(&app->console, "\nСТАТУС: ");
         gconsole_write(&app->console, ramfs_persist_state_name());
 
     } else if (str_eq(argv[0], "fsinfo")) {
         gconsole_write(&app->console, "\nRAMFS + ");
         gconsole_write(&app->console, ramfs_persist_state_name());
         if (ramfs_persist_errors()) {
-            gconsole_write(&app->console, "\nerrors: ");
+            gconsole_write(&app->console, "\nошибки: ");
             write_padded(&app->console, ramfs_persist_errors(), 1);
         }
 
     } else if (str_eq(argv[0], "help")) {
-        gconsole_write(&app->console, "\nLS CD PWD MKDIR CAT TOUCH EDIT ECHO");
-        gconsole_write(&app->console, "\nCLEAR DATE UPTIME NEOFETCH DF FSINFO HELP");
+        gconsole_write(&app->console, "\nls cd pwd mkdir cat touch edit echo");
+        gconsole_write(&app->console, "\nclear date uptime neofetch df fsinfo help");
         if (ext_help) {
             gconsole_putc(&app->console, '\n');
             gconsole_write(&app->console, ext_help);
@@ -382,7 +391,7 @@ static void exec_command(terminal_app_t *app, char *line) {
         /* выполнена внешней командой (сеть) */
 
     } else {
-        print_error(app, "unknown command");
+        print_error(app, "неизвестная команда");
     }
 }
 
@@ -391,7 +400,7 @@ static void run_command(terminal_app_t *app, char *line) {
     int append = 0;
     int has_redir = split_redirect(line, &redir_file, &append);
     if (has_redir < 0) {
-        print_error(app, "syntax error: expected file after >");
+        print_error(app, "ошибка синтаксиса: ожидается файл после >");
         return;
     }
     if (has_redir == 0) {
@@ -416,7 +425,7 @@ static void run_command(terminal_app_t *app, char *line) {
     }
 
     if (ramfs_is_dir(redir_path)) {
-        print_error(app, "is a directory");
+        print_error(app, "это каталог");
         return;
     }
 
@@ -441,7 +450,7 @@ static void run_command(terminal_app_t *app, char *line) {
         wr = ramfs_write(redir_path, cap.buf + start, out_len);
     }
 
-    if (wr != 0) print_error(app, "write failed");
+    if (wr != 0) print_error(app, "ошибка записи");
 }
 
 void terminal_app_init(terminal_app_t *app, const gui_window_t *win) {
@@ -462,8 +471,102 @@ void terminal_app_init_colors(terminal_app_t *app, const gui_window_t *win,
     ramfs_mkdir(TERM_HOME_DIR);
     str_copy(app->cwd, TERM_HOME_DIR, sizeof(app->cwd));
 
-    gconsole_write(&app->console, "PROSHIVKAOS TERMINAL");
+    gconsole_write(&app->console, "Терминал proshivkaOS");
     print_prompt(app);
+}
+
+/* ---------------- Автодополнение по Tab ---------------- */
+
+static const char *const TERM_CMDS[] = {
+    "ls", "cd", "pwd", "mkdir", "cat", "touch", "edit", "clear",
+    "date", "uptime", "neofetch", "df", "fsinfo", "echo", "help",
+    "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
+};
+#define TERM_LOCAL_CMD_COUNT 15
+#define TERM_ALL_CMD_COUNT   (sizeof(TERM_CMDS) / sizeof(TERM_CMDS[0]))
+
+static const char *const TERM_FILE_CMDS[] = { "ls", "cd", "cat", "edit", "touch", "mkdir" };
+
+static int starts_with(const char *s, const char *prefix, size_t plen) {
+    for (size_t i = 0; i < plen; i++)
+        if (s[i] != prefix[i] || !s[i]) return 0;
+    return 1;
+}
+
+static int word_eq(const char *w, size_t wlen, const char *b) {
+    return str_len(b) == wlen && starts_with(b, w, wlen);
+}
+
+static int is_file_cmd(const char *w, size_t wlen) {
+    for (size_t i = 0; i < sizeof(TERM_FILE_CMDS) / sizeof(TERM_FILE_CMDS[0]); i++)
+        if (word_eq(w, wlen, TERM_FILE_CMDS[i])) return 1;
+    return 0;
+}
+
+static void append_byte_to_line(terminal_app_t *app, char ch) {
+    if (app->line_len < TERM_LINE_BUF - 1) {
+        app->line[app->line_len++] = ch;
+        gconsole_putc(&app->console, ch);
+    }
+}
+
+static void autocomplete(terminal_app_t *app) {
+    size_t len = app->line_len;
+    size_t ws = len;
+    while (ws > 0 && app->line[ws - 1] != ' ') ws--;
+    size_t plen = len - ws;
+
+    int first = 1;
+    size_t a = 0;
+    while (a < ws && app->line[a] == ' ') a++;
+    if (a < ws) first = 0;
+
+    if (!first) {
+        size_t b = a;
+        while (b < len && app->line[b] != ' ') b++;
+        if (!is_file_cmd(app->line + a, b - a)) return;
+    }
+
+    const char *m[64];
+    size_t n = 0;
+    if (first) {
+        size_t ncmds = ext_cmd ? TERM_ALL_CMD_COUNT : TERM_LOCAL_CMD_COUNT;
+        for (size_t i = 0; i < ncmds && n < 64; i++)
+            if (starts_with(TERM_CMDS[i], app->line + ws, plen)) m[n++] = TERM_CMDS[i];
+    } else {
+        const ramfs_file_t *files[RAMFS_MAX_ENTRIES];
+        size_t fn = ramfs_list_dir(app->cwd, files, RAMFS_MAX_ENTRIES);
+        for (size_t i = 0; i < fn && n < 64; i++)
+            if (starts_with(files[i]->name, app->line + ws, plen)) m[n++] = files[i]->name;
+    }
+    if (!n) return;
+
+    size_t common = str_len(m[0]);
+    for (size_t k = 1; k < n; k++) {
+        size_t l = 0;
+        while (m[0][l] && m[k][l] == m[0][l]) l++;
+        if (l < common) common = l;
+    }
+
+    if (common > plen) {
+        for (size_t i = plen; i < common; i++) append_byte_to_line(app, m[0][i]);
+        if (n == 1) append_byte_to_line(app, ' ');
+        return;
+    }
+    if (n == 1) {
+        if (app->line_len == 0 || app->line[app->line_len - 1] != ' ')
+            append_byte_to_line(app, ' ');
+        return;
+    }
+
+    gconsole_putc(&app->console, '\n');
+    for (size_t k = 0; k < n; k++) {
+        if (k) gconsole_write(&app->console, "  ");
+        gconsole_write(&app->console, m[k]);
+    }
+    app->line[app->line_len] = '\0';
+    print_prompt(app);
+    gconsole_write(&app->console, app->line);
 }
 
 void terminal_app_handle_char(terminal_app_t *app, char c) {
@@ -490,6 +593,11 @@ void terminal_app_handle_key(terminal_app_t *app, int key) {
         return;
     }
 
+    if (cp == '\t') {
+        if (!app->in_edit_mode) autocomplete(app);
+        return;
+    }
+
     if (cp == '\r') cp = '\n';
 
     if (cp == '\n') {
@@ -499,7 +607,7 @@ void terminal_app_handle_key(terminal_app_t *app, int key) {
             if (str_eq(app->line, ".")) {
                 ramfs_write(app->edit_filename, app->edit_buf, app->edit_total);
                 app->in_edit_mode = 0;
-                gconsole_write(&app->console, "\nsaved");
+                gconsole_write(&app->console, "\nсохранено");
             } else {
                 size_t len = str_len(app->line);
                 if (app->edit_total + len + 1 < RAMFS_MAX_FILE_SIZE) {

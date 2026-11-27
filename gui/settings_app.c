@@ -5,18 +5,19 @@ void settings_app_init(settings_app_t *app, const gui_window_t *win, uint8_t *de
     gconsole_init(&app->console, win, GFX_BLACK, GFX_LIGHT_GREY);
     app->desktop_bg = desktop_bg;
 
-    gconsole_write(&app->console, "SETTINGS");
-    gconsole_write(&app->console, "\n\nTHEME:");
-    gconsole_write(&app->console, "\nL LIGHT  D DARK");
-    gconsole_write(&app->console, "\nN WIN11  M W11DK");
-    gconsole_write(&app->console, "\n\nBACKGROUND:");
-    gconsole_write(&app->console, "\nW WALLPAPER");
-    gconsole_write(&app->console, "\n1 CYAN 2 GREEN");
-    gconsole_write(&app->console, "\n3 BLUE 4 GREY");
-    gconsole_write(&app->console, "\n\nRESOLUTION:");
-    gconsole_write(&app->console, "\nA 320X200");
-    gconsole_write(&app->console, "\nB 640X480");
-    gconsole_write(&app->console, "\nC 800X600");
+    gconsole_write(&app->console, "НАСТРОЙКИ");
+    gconsole_write(&app->console, "\n\nТЕМА:");
+    gconsole_write(&app->console, "\nL СВЕТЛАЯ  D ТЁМНАЯ");
+    gconsole_write(&app->console, "\nN WIN11    M WIN11 ТЁМН.");
+    gconsole_write(&app->console, "\n\nФОН:");
+    gconsole_write(&app->console, "\nW ОБОИ");
+    gconsole_write(&app->console, "\n1 БИРЮЗ. 2 ЗЕЛЁН.");
+    gconsole_write(&app->console, "\n3 СИНИЙ  4 СЕРЫЙ");
+    gconsole_write(&app->console, "\n\nРАЗРЕШЕНИЕ:");
+    gconsole_write(&app->console, "\nA 320x200  B 640x480");
+    gconsole_write(&app->console, "\nC 800x600");
+    gconsole_write(&app->console, "\n\nМАСШТАБ:");
+    gconsole_write(&app->console, "\n5 1X  6 2X  7 3X");
 }
 
 int settings_app_handle_char(settings_app_t *app, char c) {
@@ -37,6 +38,10 @@ int settings_app_handle_char(settings_app_t *app, char c) {
         case 'a': case 'A': return SETTINGS_RES_320x200;
         case 'b': case 'B': return SETTINGS_RES_640x480;
         case 'c': case 'C': return SETTINGS_RES_800x600;
+
+        case '5': return SETTINGS_SCALE_1;
+        case '6': return SETTINGS_SCALE_2;
+        case '7': return SETTINGS_SCALE_3;
 
         default: return SETTINGS_NOTHING;
     }

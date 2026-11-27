@@ -37,7 +37,7 @@ static int net_command(terminal_app_t *app, int argc, char *argv[]) {
     if (!have_nic) {
         out_putc(app, '\n');
         out_style(app, NET_STYLE_ERROR);
-        gconsole_write(&app->console, "no network card (QEMU: -device rtl8139)");
+        gconsole_write(&app->console, "нет сетевой карты (QEMU: -device rtl8139)");
         out_style(app, NET_STYLE_NORMAL);
         return 1;
     }
@@ -61,5 +61,5 @@ void terminal_net_install(void (*redraw)(void), int (*pump)(void)) {
     net_set_pump(pump);
 
     terminal_app_set_ext_command(net_command);
-    terminal_app_set_ext_help("IFCONFIG ARPING PING DHCP UDPSEND NSLOOKUP HTTP SSH");
+    terminal_app_set_ext_help("ifconfig arping ping dhcp udpsend nslookup http ssh");
 }

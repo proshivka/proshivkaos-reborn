@@ -333,7 +333,8 @@ GUI_SOURCES := $(CORE_SOURCES) $(GFX_COMMON_SOURCES) $(ARCH_BASE_SOURCES) \
     kernel/kernel_gui.c kernel/panic_gui.c \
     gui/window.c gui/wallpaper.c \
     gui/wallpaper_320x200.c gui/wallpaper_640x480.c gui/wallpaper_800x600.c \
-    gui/cursor.c gui/gconsole.c gui/terminal_app.c gui/settings_app.c gui/wm.c
+    gui/cursor.c gui/gconsole.c gui/png.c gui/gif.c \
+    gui/terminal_app.c gui/settings_app.c gui/files_app.c gui/image_app.c gui/wm.c
 
 # Сеть в окне терминала (только x86): драйвер карты, стек и сетевые команды.
 # terminal_app.c общий с тач-сборкой, поэтому сеть подключается не в нём, а
@@ -394,6 +395,7 @@ $(ABOUT_PNG_O): $(ABOUT_PNG_C) $(CFLAGS_STAMP)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 TOUCH_OBJ += $(ABOUT_PNG_O)
+GUI_OBJ   += $(ABOUT_PNG_O)
 
 # ---- Встроенный GIF-пример для Image Viewer ----
 SAMPLE_GIF_C := $(BUILD)/ineffa_gif.c
@@ -408,6 +410,7 @@ $(SAMPLE_GIF_O): $(SAMPLE_GIF_C) $(CFLAGS_STAMP)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 TOUCH_OBJ += $(SAMPLE_GIF_O)
+GUI_OBJ   += $(SAMPLE_GIF_O)
 
 # ---- Второй встроенный GIF-пример для Image Viewer -----------------------
 SAMPLE_DR_GIF_C := $(BUILD)/dr_gif.c

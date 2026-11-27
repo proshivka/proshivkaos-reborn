@@ -6,7 +6,7 @@
 
 void hal_panic(const char *msg) {
     hal_gfx_clear(GFX_RED);
-    hal_gfx_draw_string(4, 4, "KERNEL PANIC:", GFX_WHITE, GFX_RED);
+    hal_gfx_draw_string(4, 4, "ПАНИКА ЯДРА:", GFX_WHITE, GFX_RED);
     hal_gfx_draw_string(4, 4 + FONT_H + 2, msg, GFX_WHITE, GFX_RED);
 
     for (;;) {
