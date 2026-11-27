@@ -16,8 +16,7 @@
 #include "hal_gfx.h"
 #include "gfxfb.h"
 #include "palette.h"
-
-const uint8_t *font8x8_get_glyph(char c);
+#include "font.h"
 
 static inline uint32_t pal(uint8_t c) { return g_palette_xrgb[c]; }
 uint32_t hal_gfx_palette_rgb(uint8_t idx) { return pal(idx); }
@@ -454,117 +453,66 @@ void hal_gfx_fill_sphere(int cx, int cy, int r, int light_x, int light_y,
     }
 }
 
-/* ---------------- Текст ---------------- */
-
-static char to_upper(char c) {
-    if (c >= 'a' && c <= 'z') return (char)(c - 'a' + 'A');
-    return c;
-}
-
-void hal_gfx_draw_char(int x, int y, char c, uint8_t fg, uint8_t bg) {
-    const uint8_t *glyph = font8x8_get_glyph(to_upper(c));
-
-    for (int row = 0; row < FONT_H; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < FONT_W; col++)
-            gfxfb_put_pixel(x + col, y + row, ((bits >> (7 - col)) & 1) ? fg : bg);
-    }
-}
-
-void hal_gfx_draw_string(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
-    int cx = x;
-    while (*s) {
-        if (*s == '\n') { cx = x; y += FONT_H; }
-        else { hal_gfx_draw_char(cx, y, *s, fg, bg); cx += FONT_W; }
-        s++;
-    }
-}
-
-static void draw_char_transparent(int x, int y, char c, uint8_t fg) {
-    const uint8_t *glyph = font8x8_get_glyph(to_upper(c));
-
-    for (int row = 0; row < FONT_H; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < FONT_W; col++)
-            if ((bits >> (7 - col)) & 1)
-                gfxfb_put_pixel(x + col, y + row, fg);
-    }
-}
-
-void hal_gfx_draw_string_transparent(int x, int y, const char *s, uint8_t fg) {
-    int cx = x;
-    while (*s) {
-        if (*s == '\n') { cx = x; y += FONT_H; }
-        else { draw_char_transparent(cx, y, *s, fg); cx += FONT_W; }
-        s++;
-    }
-}
-
-/* ---- Крупный текст — сглаженный шрифт ----
- *
- * От масштаба 2 и выше текст рисуется Roboto из заранее растрированных
- * масок (gui/font.c): на телефоне пиксельный шрифт 8x8, растянутый вчетверо,
- * и был главной причиной «пиксельного» вида. Масштаб 1 — десктопная сборка
- * на маленьком экране — остаётся прежним. */
-#include "font.h"
+/* ---------------- Текст (Roboto / Roboto Mono, UTF-8) ---------------- */
 
 static int aa_scale(int scale) {
-    if (scale < 2) return 0;
+    if (scale < 1) return 1;
     return scale >= FONT_SCALES ? FONT_SCALES - 1 : scale;
 }
 
 int hal_gfx_cell_w(int scale) {
     if (scale < 1) scale = 1;
-    return aa_scale(scale) ? font_mono_advance(scale) : FONT_W * scale;
+    return font_mono_advance(scale);
 }
 
 void hal_gfx_draw_char_scaled(int x, int y, char c, uint8_t fg, uint8_t bg, int scale) {
     if (scale < 1) scale = 1;
     int s = aa_scale(scale);
-    if (s) {
-        int cw = font_mono_advance(scale);
-        gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
-        if (c != ' ')
-            font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw,
-                                  (uint32_t)(unsigned char)c, hal_gfx_palette_rgb(fg));
-        return;
-    }
+    int cw = font_mono_advance(scale);
+    gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
+    if (c != ' ')
+        font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw,
+                              (uint32_t)(unsigned char)c, hal_gfx_palette_rgb(fg));
+}
 
-    const uint8_t *glyph = font8x8_get_glyph(to_upper(c));
-    for (int row = 0; row < FONT_H; row++) {
-        uint8_t bits = glyph[row];
-        int col = 0;
-        while (col < FONT_W) {
-            int on = (bits >> (7 - col)) & 1;
-            int start = col;
-            while (col < FONT_W && (((bits >> (7 - col)) & 1) == on)) col++;
-            gfxfb_fill_rect(x + start * scale, y + row * scale,
-                            (col - start) * scale, scale, on ? fg : bg);
+void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale) {
+    if (scale < 1) scale = 1;
+    int s = aa_scale(scale);
+    int cw = font_mono_advance(scale);
+    gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
+    if (cp != ' ')
+        font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw, cp, hal_gfx_palette_rgb(fg));
+}
+
+void hal_gfx_draw_char(int x, int y, char c, uint8_t fg, uint8_t bg) {
+    hal_gfx_draw_char_scaled(x, y, c, fg, bg, 1);
+}
+
+void hal_gfx_draw_string(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
+    int cx = x;
+    while (*s) {
+        if (*s == '\n') {
+            cx = x;
+            y += FONT_H;
+            s++;
+            continue;
         }
+        char line[256];
+        int n = 0;
+        while (s[n] && s[n] != '\n' && n < (int)sizeof(line) - 1) {
+            line[n] = s[n];
+            n++;
+        }
+        line[n] = 0;
+        int w = font_width(&g_font_ui[1], line);
+        gfxfb_fill_rect(cx, y, w, FONT_H, bg);
+        cx += font_draw(&g_font_ui[1], cx, y, 1, line, hal_gfx_palette_rgb(fg));
+        s += n;
     }
 }
 
-/* Один символ по коду Юникода — клетка моноширинной сетки, как у
- * hal_gfx_draw_char_scaled(), но не ограниченная байтом: так рисуется
- * кириллица. На масштабе 1 пиксельный шрифт 8x8 знает только ASCII, поэтому
- * всё остальное рисуется мелкой сглаженной гарнитурой (g_font_mono[1],
- * она сделана ровно под сетку 8x8) — латиница остаётся пиксельной, а
- * кириллица не превращается в "?". Символа нет в шрифте — рисуется "?". */
-void hal_gfx_draw_cp_scaled(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int scale) {
-    if (cp < 0x80) { hal_gfx_draw_char_scaled(x, y, (char)cp, fg, bg, scale); return; }
-
-    if (scale < 1) scale = 1;
-    int s = aa_scale(scale);
-    int cw;
-    if (s) {
-        cw = font_mono_advance(scale);
-    } else {
-        s = 1;
-        scale = 1;
-        cw = FONT_W;                      /* та же клетка, что у пиксельного шрифта */
-    }
-    gfxfb_fill_rect(x, y, cw, FONT_H * scale, bg);
-    font_draw_cp_centered(&g_font_mono[s], x, y, scale, cw, cp, hal_gfx_palette_rgb(fg));
+void hal_gfx_draw_string_transparent(int x, int y, const char *s, uint8_t fg) {
+    hal_gfx_draw_string_scaled(x, y, s, fg, 1);
 }
 
 void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int scale) {
@@ -579,38 +527,14 @@ void hal_gfx_draw_string_scaled(int x, int y, const char *s, uint8_t fg, int sca
             s++;
             continue;
         }
-        if (as) {
-            /* До конца строки одним вызовом: шаг пера дробный, и
-               склеивать ширины букв по одной значило бы копить ошибку. */
-            char line[256];
-            int n = 0;
-            while (s[n] && s[n] != '\n' && n < (int)sizeof(line) - 1) { line[n] = s[n]; n++; }
-            line[n] = 0;
-            cx += font_draw(&g_font_ui[as], cx, y, scale, line, hal_gfx_palette_rgb(fg));
-            s += n;
-            continue;
-        }
-
-        if ((unsigned char)*s >= 0x80) {
-            /* Не ASCII (кириллица): в пиксельном шрифте этого нет, берём
-               мелкую сглаженную гарнитуру, см. hal_gfx_draw_cp_scaled(). */
-            uint32_t cp = font_next_cp(&s);
-            font_draw_cp_centered(&g_font_mono[1], cx, y, 1, FONT_W * scale, cp,
-                                  hal_gfx_palette_rgb(fg));
-            cx += FONT_W * scale;
-            continue;
-        }
-
-        const uint8_t *glyph = font8x8_get_glyph(to_upper(*s));
-        for (int row = 0; row < FONT_H; row++) {
-            uint8_t bits = glyph[row];
-            for (int col = 0; col < FONT_W; col++) {
-                if (!((bits >> (7 - col)) & 1)) continue;
-                gfxfb_fill_rect(cx + col * scale, y + row * scale, scale, scale, fg);
-            }
-        }
-        cx += FONT_W * scale;
-        s++;
+        /* До конца строки одним вызовом: шаг пера дробный, и
+           склеивать ширины букв по одной значило бы копить ошибку. */
+        char line[256];
+        int n = 0;
+        while (s[n] && s[n] != '\n' && n < (int)sizeof(line) - 1) { line[n] = s[n]; n++; }
+        line[n] = 0;
+        cx += font_draw(&g_font_ui[as], cx, y, scale, line, hal_gfx_palette_rgb(fg));
+        s += n;
     }
 }
 
@@ -622,19 +546,11 @@ int hal_gfx_string_width(const char *s, int scale) {
     while (*s) {
         int n = 0;
         while (s[n] && s[n] != '\n') n++;
-        int w;
-        if (as) {
-            char line[256];
-            int k = n < 255 ? n : 255;
-            for (int i = 0; i < k; i++) line[i] = s[i];
-            line[k] = 0;
-            w = font_width(&g_font_ui[as], line);
-        } else {
-            int chars = 0;                      /* символы, а не байты UTF-8 */
-            for (int i = 0; i < n; i++)
-                if (((unsigned char)s[i] & 0xC0) != 0x80) chars++;
-            w = chars * FONT_W * scale;
-        }
+        char line[256];
+        int k = n < 255 ? n : 255;
+        for (int i = 0; i < k; i++) line[i] = s[i];
+        line[k] = 0;
+        int w = font_width(&g_font_ui[as], line);
         if (w > best) best = w;
         s += n;
         if (*s == '\n') s++;

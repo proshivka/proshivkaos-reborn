@@ -161,6 +161,22 @@ static void cmd_cd(int argc, char *argv[]) {
     hal_console_write(ramfs_lookup(path) ? ": это не каталог\n" : ": данный каталог отсутствует\n");
 }
 
+static void cmd_pwd(void) {
+    hal_console_write(g_cwd);
+    hal_console_putc('\n');
+}
+
+static void cmd_mkdir(int argc, char *argv[]) {
+    if (argc < 2) {
+        hal_console_write("использование: mkdir <каталог>\n");
+        return;
+    }
+    char path[RAMFS_MAX_PATH_LEN];
+    path_resolve(argv[1], path, sizeof(path));
+    if (ramfs_mkdir(path) != 0)
+        hal_console_write("mkdir: не удалось создать каталог\n");
+}
+
 static void cmd_cat(int argc, char *argv[]) {
     if (argc < 2) {
         hal_console_write("usage: cat <file>\n");
@@ -639,36 +655,31 @@ static void cmd_edit(int argc, char *argv[]) {
     editor_run(path);
 }
 
-static void cmd_hpbd(void) {
-    hal_console_write(
-        "С днём рождения, prosh1vka!\n"
-    );
-}
-
 static void cmd_help(void) {
     hal_console_write(
         "Доступные команды:\n"
         "  ls [каталог]         - список файлов\n"
         "  cd [каталог]         - перейти в каталог (cd .., cd ~, cd /)\n"
-        "  cat <файл>         - вывести содержимое файла\n"
-        "  touch <файл>       - создать пустой файл\n"
-        "  clear              - очистить вывод консоли\n"
-        "  echo               - выводит текст\n"
-        "  edit <файл>        - полноэкранный редактор\n"
-        "                       (^S сохранить, ^Q выход, ^F поиск)\n"
-        "  neofetch           - информация об устройстве\n"
-        "  df                 - свободное место на диске\n"
-        "  fsinfo             - состояние диска (сохранение файлов)\n"
-        "  help               - эта справка\n"
-        "  ifconfig           - MAC-адрес сетевой карты\n"
-        "  arping             - проверка сети (ARP к 10.0.2.2)\n"
-        "  ping <ip>          - ICMP echo\n"
-        "  dhcp               - получить адрес по DHCP\n"
+        "  pwd                  - текущий каталог\n"
+        "  mkdir <каталог>      - создать каталог\n"
+        "  cat <файл>           - вывести содержимое файла\n"
+        "  touch <файл>         - создать пустой файл\n"
+        "  clear                - очистить вывод консоли\n"
+        "  echo                 - выводит текст\n"
+        "  edit <файл>          - полноэкранный редактор\n"
+        "                         (^S сохранить, ^Q выход, ^F поиск)\n"
+        "  neofetch             - информация об устройстве\n"
+        "  df                   - свободное место на диске\n"
+        "  fsinfo               - состояние диска (сохранение файлов)\n"
+        "  help                 - эта справка\n"
+        "  ifconfig             - MAC-адрес сетевой карты\n"
+        "  arping               - проверка сети (ARP к 10.0.2.2)\n"
+        "  ping <ip>            - ICMP echo\n"
+        "  dhcp                 - получить адрес по DHCP\n"
         "  udpsend <ip> <p> <text> - отправить UDP\n"
-        "  nslookup <name>    - узнать IP-адрес по имени (DNS)\n"
-        "  http <host> [path] - HTTP GET по порту 80\n"
+        "  nslookup <name>      - узнать IP-адрес по имени (DNS)\n"
+        "  http <host> [path]   - HTTP GET по порту 80\n"
         "  ssh [-p port] user@host [cmd] - SSH\n"
-        "  hpbd               - сюрприз\n"
     );
 }
 
@@ -687,10 +698,9 @@ static void print_prompt(void) {
 /* Имена команд для Tab. ДЕРЖАТЬ В СИНХРОНЕ с цепочкой else-if в shell_run():
  * добавил команду — добавь её имя сюда. */
 static const char *const COMMANDS[] = {
-    "ls", "cd", "cat", "touch", "edit", "neofetch", "df", "fsinfo", "help",
+    "ls", "cd", "pwd", "mkdir", "cat", "touch", "edit", "neofetch", "df", "fsinfo", "help",
     "clear", "echo",
     "ifconfig", "arping", "ping", "dhcp", "udpsend", "nslookup", "http", "ssh",
-    "hpbd",
 };
 
 typedef struct {
@@ -729,6 +739,8 @@ static int split_redirect(char *line, char **out_file, int *append) {
 static void exec_shell_cmd(int argc, char *argv[]) {
         if (str_eq(argv[0], "ls"))            cmd_ls(argc, argv);
         else if (str_eq(argv[0], "cd"))       cmd_cd(argc, argv);
+        else if (str_eq(argv[0], "pwd"))      cmd_pwd();
+        else if (str_eq(argv[0], "mkdir"))    cmd_mkdir(argc, argv);
         else if (str_eq(argv[0], "cat"))      cmd_cat(argc, argv);
         else if (str_eq(argv[0], "touch"))    cmd_touch(argc, argv);
         else if (str_eq(argv[0], "edit"))     cmd_edit(argc, argv);
@@ -745,7 +757,6 @@ static void exec_shell_cmd(int argc, char *argv[]) {
         else if (str_eq(argv[0], "udpsend")) cmd_udpsend(argc, argv);
         else if (str_eq(argv[0], "nslookup")) cmd_nslookup(argc, argv);
         else if (str_eq(argv[0], "http"))     cmd_http(argc, argv);
-        else if (str_eq(argv[0], "hpbd"))     cmd_hpbd();
         else if (shell_try_netcmd(argc, argv)) {}
         else {
             hal_console_write("неизвестная команда: ");

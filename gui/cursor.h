@@ -5,5 +5,6 @@
 #define GUI_CURSOR_H
 
 void gui_draw_cursor(int x, int y);
+void gui_draw_cursor_scaled(int x, int y, int scale);
 
 #endif

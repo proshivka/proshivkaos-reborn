@@ -52,12 +52,21 @@ typedef struct {
 } gui_window_t;
 
 void gui_set_theme(int theme);
+void gui_set_scale(int scale);
 void gui_set_cursor_pos(int x, int y);
 int  gui_taskbar_height(int screen_h, int theme);
 
 void gui_draw_desktop(uint8_t bg_color);
 void gui_draw_window_chrome(const gui_window_t *win, int dark_theme);
-void gui_draw_taskbar(int screen_w, int screen_h, int tb_count, int start_open, int hour, int min);
+void gui_draw_taskbar(int screen_w, int screen_h, int tb_count, int start_open,
+                      int hour, int min, int ru_layout);
+void gui_clock_rect(int screen_w, int screen_h, int *x, int *y, int *w, int *h);
+
+/* Всплывающий календарь над часами */
+void gui_draw_calendar(int screen_w, int screen_h, int year, int month,
+                       int today_y, int today_m, int today_d, int dark_theme);
+int  gui_calendar_handle_click(int screen_w, int screen_h, int mx, int my,
+                               int *year, int *month);
 
 /* Область содержимого окна (внутри рамки и под title bar) —
  * приложение рисует/пишет текст именно сюда. */
@@ -81,8 +90,8 @@ void gui_taskbar_button_rect(int screen_w, int screen_h, int index, int tb_count
 void gui_draw_taskbar_button(int screen_w, int screen_h, int index, int tb_count,
                              const char *title, int icon_id, int active, int dark_theme);
 
-/* Всплывающее меню "Пуск": 2 пункта, TERMINAL и SETTINGS */
-#define START_MENU_ITEMS 2
+/* Всплывающее меню "Пуск": 4 пункта */
+#define START_MENU_ITEMS 4
 void gui_draw_start_menu(int screen_w, int screen_h, int dark_theme);
 void gui_start_menu_item_rect(int screen_w, int screen_h, int index, int *x, int *y, int *w, int *h);
 
